@@ -2,7 +2,7 @@
 import { html, raw, esc } from "./html.js";
 import { CYCLES, fmtDate, initials, money, pounds } from "./util.js";
 
-export const ASSET_V = "8";
+export const ASSET_V = "9";
 
 const I = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
@@ -67,7 +67,7 @@ function nav(items, active) {
 }
 
 function shell(c, { title, active, body, groups, home, who, sub, logout, banner, topActions, kicker }) {
-  const brand = html`<a class="brand" href="${home}"><span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span><span>${c.s.company_name}</span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
+  const brand = html`<a class="brand" href="${home}"><span class="brand-stack"><span class="brand-row"><span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span><span>${c.s.company_name}</span></span><span class="logo-tag">Client Area</span></span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
   return new Response(
     String(html`${head(c, title)}
 <body class="app">
@@ -117,7 +117,7 @@ function siteHeader(c, { signedIn }) {
   return html`<a class="skip" href="#main">Skip to content</a>
 <header class="site-head">
   <div class="site-wrap head-in">
-    <a class="site-logo" href="${c.s.site_url}" aria-label="${c.s.company_name} home">${logo(c)}</a>
+    <div class="logo-stack"><a class="site-logo" href="${c.s.site_url}" aria-label="${c.s.company_name} home">${logo(c)}</a><span class="logo-tag">Client Area</span></div>
     <nav class="site-nav" aria-label="Website">${links.map((l) => html`<a href="${l.href}">${l.label}</a>`)}</nav>
     <div class="head-cta">${signedIn
       ? html`<a class="btn btn-sm${c.url.pathname === "/" ? " btn-primary" : ""}" href="/">${icon("user")}<span>Your account</span></a><form method="post" action="/logout" class="inline">${csrf(c)}<button class="icon-btn" title="Sign out" aria-label="Sign out">${icon("logout")}</button></form>`
