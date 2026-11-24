@@ -63,6 +63,7 @@ export const PLAN_LIMITS = [
 export const PLAN_FLAGS = [
   ["allow_shell", "Allow PHP exec and shell functions"],
   ["no_sftp", "No SFTP"],
+  ["no_sites", "Mail only: no websites"],
 ];
 
 export function parseLimits(json) {

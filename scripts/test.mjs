@@ -513,7 +513,7 @@ see(r, "limits");
 assert.deepEqual(berthPlansPushed.get("Plus"), {
   name: "Plus", max_sites: 5, disk_mb: 30720, dns_zones: 0, cpu_percent: 0, ram_mb: 2048, max_processes: 0,
   max_domains: 0, memory_mb: 384, workers: 0, upload_mb: 0, db_connections: 0, mail_domains: 0, mailboxes: 0, mail_aliases: 0, mail_storage_mb: 0,
-  allow_shell: true, no_sftp: false,
+  allow_shell: true, no_sftp: false, no_sites: false,
 });
 r = await admin.get(`/admin/products/${plusId}`);
 assert.match(r.text_, /name="lim_ram_mb" type="number" value="2048"/);
