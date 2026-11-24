@@ -106,6 +106,7 @@ const ctx = { waitUntil: (p) => p.catch((e) => console.error("waitUntil", e)) };
 // Fake Stripe and Berth.
 const calls = [];
 const berthAccounts = new Map();
+const berthPlansPushed = new Map();
 let piCounter = 0;
 globalThis.fetch = async (input, init = {}) => {
   const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
@@ -134,6 +135,12 @@ globalThis.fetch = async (input, init = {}) => {
     const auth = (init.headers || {}).Authorization;
     if (auth !== "Bearer berth_tok.secret") return j({ error: "bad token" }, 401);
     if (p === "/plans") return j([{ id: "pl1", name: "Starter" }, { id: "pl2", name: "Pro" }]);
+    if (p.startsWith("/plans/") && method === "PUT") {
+      const b = JSON.parse(body);
+      if (b.memory_mb && b.memory_mb < 32) return j({ error: "PHP memory must be at least 32 MB" }, 400);
+      berthPlansPushed.set(decodeURIComponent(p.slice(7)), b);
+      return j({ id: "plx", ...b });
+    }
     if (p === "/accounts" && method === "POST") {
       const b = JSON.parse(body);
       if ([...berthAccounts.values()].some((a) => a.external_id === b.external_id)) return j({ error: "exists", account_id: "acc1" }, 409);
@@ -478,6 +485,24 @@ r = await admin.submit("/admin/products/new", "/admin/products/new", {
   price_monthly: "2.99", price_annually: "29.90", setup_fee: "", sort: "2", needs_domain: "1", visible: "1",
 });
 assert.equal(see(r, "slug product"), "/admin/products");
+assert.ok(!berthPlansPushed.size, "no limits, nothing sent");
+// Limits on a product are sent to Berth as a plan.
+const plusId = (await env.DB.prepare("SELECT id FROM products WHERE slug = 'plus'").first()).id;
+r = await admin.submit(`/admin/products/${plusId}`, `/admin/products/${plusId}`, {
+  name: "Plus", slug: "plus", description: "5 websites", type: "hosting", berth_plan: "Plus", price_monthly: "2.99", price_annually: "29.90",
+  sort: "2", needs_domain: "1", visible: "1", lim_max_sites: "5", lim_disk_mb: "30720", lim_memory_mb: "384", lim_ram_mb: "2048", lim_dns_zones: "", lim_allow_shell: "1",
+});
+see(r, "limits");
+assert.deepEqual(berthPlansPushed.get("Plus"), {
+  name: "Plus", max_sites: 5, disk_mb: 30720, dns_zones: 0, cpu_percent: 0, ram_mb: 2048, max_processes: 0,
+  max_domains: 0, memory_mb: 384, workers: 0, upload_mb: 0, db_connections: 0, allow_shell: true, no_sftp: false,
+});
+r = await admin.get(`/admin/products/${plusId}`);
+assert.match(r.text_, /name="lim_ram_mb" type="number" value="2048"/);
+berthPlansPushed.clear();
+r = await admin.submit("/admin/products", "/admin/products/push-berth");
+assert.match(see(r, "push all"), /\/admin\/products/);
+assert.ok(berthPlansPushed.has("Plus"));
 r = await admin.submit("/admin/products/new", "/admin/products/new", { name: "Dupe", slug: "plus", price_monthly: "1", type: "other" });
 assert.match(see(r, "dupe slug"), /products\/new/);
 const guest = browser();

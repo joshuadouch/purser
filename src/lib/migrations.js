@@ -242,6 +242,11 @@ export const MIGRATIONS = [
       `CREATE UNIQUE INDEX products_slug ON products (slug) WHERE slug IS NOT NULL AND slug != ''`,
     ],
   },
+  {
+    id: 3,
+    name: "berth plan limits on products",
+    sql: [`ALTER TABLE products ADD COLUMN berth_limits TEXT NOT NULL DEFAULT ''`],
+  },
 ];
 
 let applied = null;
