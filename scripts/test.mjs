@@ -108,6 +108,7 @@ const calls = [];
 const berthAccounts = new Map();
 const berthPlansPushed = new Map();
 const berthMail = new Map();
+const mailActions = [];
 let piCounter = 0;
 globalThis.fetch = async (input, init = {}) => {
   const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
@@ -149,11 +150,25 @@ globalThis.fetch = async (input, init = {}) => {
       berthAccounts.set(acc.id, acc);
       return j({ account: acc, username: "alice", password: "GeneratedPw123", login_url: "https://berth.test/login" }, 201);
     }
+    const am = p.match(/^\/accounts\/([^/]+)\/addons(?:\/(.+))?$/);
+    if (am) {
+      const acc = berthAccounts.get(decodeURIComponent(am[1]));
+      if (!acc) return j({ error: "not found" }, 404);
+      acc.addons = acc.addons || [];
+      if (method === "POST" && !acc.addons.includes(JSON.parse(body).plan)) acc.addons.push(JSON.parse(body).plan);
+      if (method === "DELETE") acc.addons = acc.addons.filter((x) => x !== decodeURIComponent(am[2]));
+      return j(acc);
+    }
     const pm = p.match(/^\/accounts\/([^/]+)\/plugins\/(\w+)$/);
     if (pm && method === "POST") {
       const ref = decodeURIComponent(pm[1]);
       const acc = ref.startsWith("ext:") ? [...berthAccounts.values()].find((a) => a.external_id === ref.slice(4)) : berthAccounts.get(ref);
       if (!acc || pm[2] !== "mailcow") return j({ error: "not found" }, 404);
+      const { domain, action } = JSON.parse(body);
+      if (action) {
+        mailActions.push(`${acc.id} ${action} ${domain}`);
+        return j({ domain });
+      }
       const created = !berthMail.has(acc.id);
       berthMail.set(acc.id, JSON.parse(body).domain);
       return j({ domain: JSON.parse(body).domain, created, webmail: "https://webmail.test/" });
@@ -597,6 +612,56 @@ assert.equal(halfSvc.price, 1495);
 r = await admin.get("/admin/promos");
 assert.match(r.text_, /TEST100/);
 assert.match(r.text_, /100% off your first invoice/);
+
+// ---- mail joins the client's hosting account -----------------------------------------------
+await env.DB.prepare(`INSERT INTO products (name, type, berth_plan, berth_limits, price_monthly, created_at) VALUES ('Business Email', 'hosting', 'Business Email', '{"mail_domains":1,"no_sites":true}', 100, ?)`).bind(new Date().toISOString()).run();
+const mailProd = (await q("SELECT id FROM products WHERE name = 'Business Email'")).id;
+const erinHost = await q(`SELECT * FROM services WHERE id = ${erinSvc.id}`);
+assert.ok(erinHost.berth_account, "erin's hosting has a Berth account");
+const accountsBefore = berthAccounts.size;
+await env.DB.prepare("INSERT INTO services (client_id, product_id, label, cycle, price, status, created_at) VALUES (?, ?, 'erin.dev', 'monthly', 100, 'pending', ?)").bind(erinSvc.client_id, mailProd, new Date().toISOString()).run();
+const erinMail = (await q("SELECT id FROM services ORDER BY id DESC")).id;
+r = await admin.submit(`/admin/services/${erinMail}`, `/admin/services/${erinMail}/act`, { do: "activate" });
+let em = await q(`SELECT * FROM services WHERE id = ${erinMail}`);
+assert.equal(berthAccounts.size, accountsBefore, "no second Berth account for mail");
+assert.equal(em.berth_account, erinHost.berth_account);
+assert.equal(em.berth_addon, 1);
+assert.deepEqual(berthAccounts.get(erinHost.berth_account).addons, ["Business Email"]);
+assert.equal(berthMail.get(erinHost.berth_account), "erin.dev");
+assert.ok(lastMailTo("erin@example.com").raw.includes("already have"), "joined email");
+// Suspending the mail pauses only its domain.
+r = await admin.submit(`/admin/services/${erinMail}`, `/admin/services/${erinMail}/act`, { do: "suspend", reason: "test" });
+assert.equal(berthAccounts.get(erinHost.berth_account).suspended, false);
+assert.deepEqual(mailActions.slice(-1), [`${erinHost.berth_account} suspend erin.dev`]);
+r = await admin.submit(`/admin/services/${erinMail}`, `/admin/services/${erinMail}/act`, { do: "unsuspend" });
+assert.deepEqual(mailActions.slice(-1), [`${erinHost.berth_account} unsuspend erin.dev`]);
+// Cancelling the mail removes the domain and the add-on; the hosting stays.
+r = await admin.submit(`/admin/services/${erinMail}`, `/admin/services/${erinMail}/act`, { do: "terminate" });
+assert.ok(berthAccounts.has(erinHost.berth_account), "hosting account kept");
+assert.deepEqual(berthAccounts.get(erinHost.berth_account).addons, []);
+assert.deepEqual(mailActions.slice(-1), [`${erinHost.berth_account} remove erin.dev`]);
+
+// Hosting for a mail-only client moves their account onto the hosting plan.
+await env.DB.prepare("INSERT INTO clients (email, first_name, password_hash, created_at) VALUES ('fay@example.com', 'Fay', 'x', ?)").bind(new Date().toISOString()).run();
+const fay = (await q("SELECT id FROM clients WHERE email = 'fay@example.com'")).id;
+await env.DB.prepare("INSERT INTO services (client_id, product_id, label, cycle, price, status, created_at) VALUES (?, ?, 'fay.shop', 'monthly', 100, 'pending', ?)").bind(fay, mailProd, new Date().toISOString()).run();
+const fayMail = (await q("SELECT id FROM services ORDER BY id DESC")).id;
+await admin.submit(`/admin/services/${fayMail}`, `/admin/services/${fayMail}/act`, { do: "activate" });
+const fayAcc = (await q(`SELECT berth_account FROM services WHERE id = ${fayMail}`)).berth_account;
+assert.ok(fayAcc);
+await env.DB.prepare("INSERT INTO services (client_id, product_id, label, cycle, price, status, created_at) VALUES (?, ?, 'fay.shop', 'monthly', 299, 'pending', ?)").bind(fay, erinSvc.product_id, new Date().toISOString()).run();
+const fayHost = (await q("SELECT id FROM services ORDER BY id DESC")).id;
+await admin.submit(`/admin/services/${fayHost}`, `/admin/services/${fayHost}/act`, { do: "activate" });
+assert.equal((await q(`SELECT berth_account FROM services WHERE id = ${fayHost}`)).berth_account, fayAcc);
+assert.equal((await q(`SELECT berth_addon FROM services WHERE id = ${fayMail}`)).berth_addon, 1);
+assert.deepEqual(berthAccounts.get(fayAcc).addons, ["Business Email"]);
+assert.equal(berthAccounts.get(fayAcc).plan, erinHost.berth_plan || (await q(`SELECT berth_plan FROM products WHERE id = ${erinSvc.product_id}`)).berth_plan);
+// Cancelling that hosting keeps the account for the mail, back on the mail plan.
+await admin.submit(`/admin/services/${fayHost}`, `/admin/services/${fayHost}/act`, { do: "terminate" });
+assert.ok(berthAccounts.has(fayAcc), "account kept for the mail");
+assert.equal(berthAccounts.get(fayAcc).plan, "Business Email");
+assert.deepEqual(berthAccounts.get(fayAcc).addons, []);
+assert.equal((await q(`SELECT berth_addon FROM services WHERE id = ${fayMail}`)).berth_addon, 0);
 
 // Migrations are idempotent.
 resetMigrationState();

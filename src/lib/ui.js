@@ -117,7 +117,7 @@ function siteHeader(c, { signedIn }) {
   return html`<a class="skip" href="#main">Skip to content</a>
 <header class="site-head">
   <div class="site-wrap head-in">
-    <div class="logo-stack"><a class="site-logo" href="${c.s.site_url}" aria-label="${c.s.company_name} home">${logo(c)}</a><span class="logo-tag">Client Area</span></div>
+    <div class="logo-stack"><a class="site-logo" href="${c.s.site_url}" aria-label="${c.s.company_name} home">${logo(c)}</a></div>
     <nav class="site-nav" aria-label="Website">${links.map((l) => html`<a href="${l.href}">${l.label}</a>`)}</nav>
     <div class="head-cta">${signedIn
       ? html`<a class="btn btn-sm${c.url.pathname === "/" ? " btn-primary" : ""}" href="/">${icon("user")}<span>Your account</span></a><form method="post" action="/logout" class="inline">${csrf(c)}<button class="icon-btn" title="Sign out" aria-label="Sign out">${icon("logout")}</button></form>`

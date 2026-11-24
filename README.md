@@ -32,6 +32,8 @@ Ordering works without an account. The website's plan buttons link to `/order/<s
 
 A paid order for a **hosting** product creates a Berth account through its provisioning API with the product's Berth plan, `external_id` `purser-<service id>`, and emails the client their username, password and panel address. Suspensions, unsuspensions, plan changes and terminations go to Berth too.
 
+One client, one Berth login: a mail-only product (Berth limits with `no_sites`) ordered by a client who already has hosting joins that account, with its plan added as an add-on. Hosting ordered by a mail-only client moves their account onto the hosting plan and keeps the mail plan as an add-on. Suspending or cancelling the mail service then only pauses or removes its mail domain; cancelling the hosting keeps the account for the mail and tells staff to remove the sites. Needs Berth v0.1.34 or later.
+
 Set it up in Admin → Settings → Berth: the Berth address (must be reachable from the internet) and a **Provisioning** API token from Berth → Settings → API tokens. Existing Berth customers can be added by hand: Clients → a client → Add service → "Existing customer", with their Berth account ID.
 
 **Plans live in Purser.** Give a hosting product a Berth plan name and fill in its limits (sites, storage, CPU, RAM, PHP memory and so on) on the product form. Saving sends the plan to Berth, creating it if it's new, and Products → **Send plans to Berth** re-sends them all. This needs a Berth with `PUT /api/provision/plans/{name}`.

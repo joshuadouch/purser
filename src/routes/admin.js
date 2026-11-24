@@ -383,7 +383,7 @@ export default function (r) {
       </div><aside>
         ${hosting ? html`<section class="card"><div class="card-head"><h3>Berth</h3>${acc ? (acc.suspended ? badge("suspended") : badge("active")) : ""}</div>
           ${s.berth_account
-            ? html`<dl class="dl dl-tight"><dt>Account</dt><dd><code>${s.berth_account}</code></dd>${s.berth_username ? html`<dt>Username</dt><dd><code>${s.berth_username}</code></dd>` : ""}
+            ? html`${s.berth_addon ? html`<p class="muted small">Shares the client's hosting account: its plan is an add-on there, and suspending or cancelling this service only touches its mail.</p>` : ""}<dl class="dl dl-tight"><dt>Account</dt><dd><code>${s.berth_account}</code></dd>${s.berth_username ? html`<dt>Username</dt><dd><code>${s.berth_username}</code></dd>` : ""}
               ${acc ? html`<dt>Plan</dt><dd>${acc.plan?.name || acc.plan_id || "none"}</dd><dt>Sites</dt><dd>${(acc.sites || []).length}</dd>` : ""}</dl>
               ${accErr ? html`<p class="small err">${accErr}</p>` : ""}`
             : html`<p class="muted small">No Berth account yet.</p>`}
@@ -426,7 +426,12 @@ export default function (r) {
     let msg = "Saved.";
     if (product && product.id !== s.product_id && product.type === "hosting" && s.berth_account && berthReady(c.s)) {
       try {
-        await berth(c.s, "PATCH", `/accounts/${accountRef({ ...s, berth_account: o.berth_account })}`, { plan: product.berth_plan || "" });
+        const ref = accountRef({ ...s, berth_account: o.berth_account });
+        if (s.berth_addon) {
+          // An add-on swaps one add-on plan for the other; the hosting plan stays.
+          if (s.berth_plan) await berth(c.s, "DELETE", `/accounts/${ref}/addons/${encodeURIComponent(s.berth_plan)}`);
+          if (product.berth_plan) await berth(c.s, "POST", `/accounts/${ref}/addons`, { plan: product.berth_plan });
+        } else await berth(c.s, "PATCH", `/accounts/${ref}`, { plan: product.berth_plan || "" });
         msg = "Saved, and the Berth plan changed.";
       } catch (e) {
         msg = `Saved, but Berth refused the plan change: ${e.message}`;
@@ -450,6 +455,10 @@ export default function (r) {
           return redirect(link.url);
         }
         case "plan":
+          if (s.berth_addon) {
+            await berth(c.s, "POST", `/accounts/${accountRef(s)}/addons`, { plan: s.berth_plan });
+            return redirect(back, `${s.berth_plan} is on the Berth account as an add-on.`);
+          }
           await berth(c.s, "PATCH", `/accounts/${accountRef(s)}`, { plan: s.berth_plan || "" });
           return redirect(back, `Berth plan set to ${s.berth_plan || "none"}.`);
         case "activate": {
