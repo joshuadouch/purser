@@ -1,0 +1,16 @@
+{
+  "name": "purser",
+  "private": true,
+  "type": "module",
+  "description": "Billing, support tickets and a client area on Cloudflare Workers",
+  "scripts": {
+    "test": "node --no-warnings scripts/test.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "preview": "wrangler versions upload"
+  },
+  "engines": { "node": ">=22.13" },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
