@@ -22,6 +22,12 @@ Live at **https://clientarea.ratlan.net** (staff: `/admin`).
 
 All the day counts are in Admin → Settings → Billing.
 
+## The website
+
+The client area is dressed as part of the public website (ratlan.net): same header, menu, footer, logo and colours, with the account sections as a tab bar under the header. Admin → Settings → General → Website sets the website address, logo and the menu and footer links; leave the address blank for the plain sidebar layout.
+
+Ordering works without an account. The website's plan buttons link to `/order/<slug>?cycle=monthly|annually` (the slug is the product's "web address name"). A visitor picks monthly or yearly, enters their domain and their details on one page, and goes straight to Stripe Checkout; their account is created on the way and they're signed in when they come back. Existing customers are sent to sign in first.
+
 ## Berth
 
 A paid order for a **hosting** product creates a Berth account through its provisioning API with the product's Berth plan, `external_id` `purser-<service id>`, and emails the client their username, password and panel address. Suspensions, unsuspensions, plan changes and terminations go to Berth too.

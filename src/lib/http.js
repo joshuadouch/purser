@@ -91,8 +91,15 @@ export function csrfOk(c) {
   return c.req.method !== "POST" || (c.session && c.form?.get("_csrf") === c.session.csrf);
 }
 
-export async function requireClient(c) {
+// Pages anyone can open (ordering): loads the client when signed in, carries on as a guest otherwise.
+export async function optionalClient(c) {
   const sess = await readSession(c.env, c.req, "client");
+  if (!sess) return;
+  return requireClient(c, sess);
+}
+
+export async function requireClient(c, known) {
+  const sess = known || (await readSession(c.env, c.req, "client"));
   if (!sess) return redirect(`/login?next=${encodeURIComponent(c.url.pathname + c.url.search)}`);
   const client = await one(c.env, "SELECT * FROM clients WHERE id = ?", sess.subject_id);
   if (!client || client.status === "closed") return redirect("/login", "That account is closed.", "err");

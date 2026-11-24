@@ -7,6 +7,7 @@ import {
 } from "../lib/auth.js";
 import { redirect, safeNext, touchLogin, forbidden } from "../lib/http.js";
 import { authPage, csrf, field, turnstile } from "../lib/ui.js";
+import { accountFields, signUp } from "../lib/signup.js";
 import { sendEmail } from "../lib/email.js";
 import { baseUrl, log, notifyAdmin } from "../lib/billing.js";
 import { clean, isEmail, nowIso } from "../lib/util.js";
@@ -65,18 +66,7 @@ export default function (r) {
       title: "Create your account",
       wide: true,
       body: html`<form method="post" class="grid2">
-        ${field({ label: "First name", name: "first_name", required: true, autocomplete: "given-name" })}
-        ${field({ label: "Last name", name: "last_name", required: true, autocomplete: "family-name" })}
-        ${field({ label: "Email", name: "email", type: "email", required: true, autocomplete: "email", wide: true })}
-        ${field({ label: "Company", name: "company", optional: true, autocomplete: "organization", wide: true })}
-        ${field({ label: "Address", name: "address1", required: true, autocomplete: "address-line1", wide: true })}
-        ${field({ label: "Town or city", name: "city", required: true, autocomplete: "address-level2" })}
-        ${field({ label: "Postcode", name: "postcode", required: true, autocomplete: "postal-code" })}
-        ${field({ label: "Phone", name: "phone", type: "tel", optional: true, autocomplete: "tel" })}
-        ${field({ label: "Country", name: "country", value: "United Kingdom", autocomplete: "country-name" })}
-        ${field({ label: "Password", name: "password", type: "password", required: true, autocomplete: "new-password", hint: "At least 10 characters.", wide: true })}
-        ${c.s.terms_url ? html`<div class="wide">${field({ type: "checkbox", name: "terms", label: html`I agree to the <a href="${c.s.terms_url}" target="_blank" rel="noopener">terms of service</a>` })}</div>` : ""}
-        <div class="wide">${turnstile(c)}</div>
+        ${accountFields(c)}
         <div class="wide"><button class="btn btn-primary btn-block">Create account</button></div>
       </form>
       <div class="auth-links"><a href="/login">I already have an account</a></div>`,
@@ -85,43 +75,9 @@ export default function (r) {
 
   r.post("/register", async (c) => {
     if (c.s.allow_registration !== "1") return redirect("/login");
-    const f = c.form;
-    const ipKey = `reg:${c.req.headers.get("cf-connecting-ip") || "?"}`;
-    if (await tooManyAttempts(c.env, ipKey, 5, 60)) return redirect("/register", "Too many sign-ups from here. Try again later.", "err");
-    if (!(await turnstileOk(c.s, f, c.req))) return redirect("/register", "Please complete the check and try again.", "err");
-    const email = clean(f.get("email"), 254).toLowerCase();
-    if (!isEmail(email)) return redirect("/register", "Enter a valid email address.", "err");
-    const pwErr = passwordProblem(f.get("password"));
-    if (pwErr) return redirect("/register", pwErr, "err");
-    if (c.s.terms_url && f.get("terms") !== "1") return redirect("/register", "Please agree to the terms to continue.", "err");
-    for (const k of ["first_name", "last_name", "address1", "city", "postcode"]) if (!clean(f.get(k))) return redirect("/register", "Please fill in every required field.", "err");
-    await recordAttempt(c.env, ipKey);
-    if (await one(c.env, "SELECT id FROM clients WHERE email = ?", email)) {
-      return redirect("/login", "There's already an account with that email. Sign in, or reset your password.", "err");
-    }
-    const id = await insert(
-      c.env,
-      `INSERT INTO clients (email, password_hash, first_name, last_name, company, address1, city, postcode, country, phone, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      email, await hashPassword(f.get("password")), clean(f.get("first_name"), 80), clean(f.get("last_name"), 80), clean(f.get("company"), 120),
-      clean(f.get("address1"), 200), clean(f.get("city"), 100), clean(f.get("postcode"), 20), clean(f.get("country"), 80) || "United Kingdom",
-      clean(f.get("phone"), 40), nowIso(),
-    );
-    const actor = { kind: "client", id, name: email };
-    await log(c.env, actor, id, "client.registered", email);
-    const t = await makeToken(c.env, "verify", id, 72);
-    await sendEmail(c.env, c.s, {
-      to: email, clientId: id,
-      subject: `Welcome to ${c.s.company_name}`,
-      lines: [
-        `Hi ${clean(f.get("first_name"))},`,
-        `Thanks for creating an account. Please confirm your email address so we can reach you about invoices and support.`,
-        { button: { label: "Confirm my email", url: `${baseUrl(c.env)}/verify/${t}` } },
-      ],
-    });
-    await notifyAdmin(c.env, c.s, `New client: ${email}`, [`${clean(f.get("first_name"))} ${clean(f.get("last_name"))} (${email}) created an account.`, { button: { label: "Open client", url: `${baseUrl(c.env)}/admin/clients/${id}` } }]);
-    const ck = await createSession(c.env, c.req, "client", id);
-    return redirect("/", "Welcome! Your account is ready. We've sent you an email to confirm your address.", "ok", [ck]);
+    const res = await signUp(c, c.form);
+    if (res.error) return redirect(res.existing ? "/login" : "/register", res.error, "err");
+    return redirect("/", "Welcome! Your account is ready. We've sent you an email to confirm your address.", "ok", [res.cookie]);
   });
 
   r.get("/verify/:token", async (c) => {

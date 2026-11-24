@@ -234,6 +234,14 @@ export const MIGRATIONS = [
       )`,
     ],
   },
+  {
+    id: 2,
+    name: "product slugs for website order links",
+    sql: [
+      `ALTER TABLE products ADD COLUMN slug TEXT`,
+      `CREATE UNIQUE INDEX products_slug ON products (slug) WHERE slug IS NOT NULL AND slug != ''`,
+    ],
+  },
 ];
 
 let applied = null;
