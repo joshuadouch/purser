@@ -34,6 +34,8 @@ A paid order for a **hosting** product creates a Berth account through its provi
 
 Set it up in Admin → Settings → Berth: the Berth address (must be reachable from the internet) and a **Provisioning** API token from Berth → Settings → API tokens. Existing Berth customers can be added by hand: Clients → a client → Add service → "Existing customer", with their Berth account ID.
 
+**Plans live in Purser.** Give a hosting product a Berth plan name and fill in its limits (sites, storage, CPU, RAM, PHP memory and so on) on the product form. Saving sends the plan to Berth, creating it if it's new, and Products → **Send plans to Berth** re-sends them all. This needs a Berth with `PUT /api/provision/plans/{name}`.
+
 Berth's suspension blocks the customer's panel sign-in; their sites keep running.
 
 ## Stripe

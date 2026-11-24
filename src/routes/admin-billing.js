@@ -9,7 +9,7 @@ import {
 } from "../lib/billing.js";
 import { invoicePage } from "./client.js";
 import { stripe } from "../lib/stripe.js";
-import { berthPlans, berthReady } from "../lib/berth.js";
+import { PLAN_FLAGS, PLAN_LIMITS, berthPlans, berthReady, parseLimits, pushPlan } from "../lib/berth.js";
 import { CYCLES, clean, fmtDateTime, fullName, int, money, nowIso, parseMoney, today } from "../lib/util.js";
 
 export default function (r) {
@@ -211,7 +211,7 @@ export default function (r) {
     const rows = await all(c.env, "SELECT p.*, (SELECT COUNT(*) FROM services s WHERE s.product_id = p.id AND s.status IN ('active','suspended')) AS used FROM products p ORDER BY sort, id");
     return adminPage(c, {
       title: "Products", active: "products",
-      topActions: html`<a class="btn btn-primary btn-sm" href="/admin/products/new">${icon("plus")}<span class="hide-sm">New product</span></a>`,
+      topActions: html`${berthReady(c.s) ? html`<form method="post" action="/admin/products/push-berth" class="inline">${csrf(c)}<button class="btn btn-sm" title="Create or update every product's plan in Berth">${icon("server")}<span class="hide-sm">Send plans to Berth</span></button></form>` : ""}<a class="btn btn-primary btn-sm" href="/admin/products/new">${icon("plus")}<span class="hide-sm">New product</span></a>`,
       body: html`<section class="card">${rows.length ? html`<table class="table"><thead><tr><th>Product</th><th class="hide-sm">Type</th><th>Prices</th><th class="hide-sm">In use</th><th></th></tr></thead><tbody>
       ${rows.map((p) => html`<tr data-href="/admin/products/${p.id}"><td><a href="/admin/products/${p.id}"><b>${p.name}</b></a>${p.slug ? html`<small class="block muted">/order/${p.slug}</small>` : ""}${p.berth_plan ? html`<small class="block muted">Berth plan: ${p.berth_plan}</small>` : ""}</td><td class="hide-sm">${p.type === "hosting" ? "Hosting (Berth)" : "Other"}</td>
       <td>${Object.keys(CYCLES).filter((k) => p[`price_${k}`] !== null).map((k) => html`<span class="nowrap">${money(p[`price_${k}`])}${CYCLES[k].per}</span> `)}</td><td class="hide-sm">${p.used}</td><td>${p.visible ? "" : badge("closed", "Hidden")}</td></tr>`)}
@@ -237,9 +237,10 @@ export default function (r) {
       ${field({ label: "Description", name: "description", type: "textarea", rows: 5, value: p.description, hint: "Shown on the order page. One feature per line works well." })}
       <div class="grid2">
         ${field({ label: "Type", name: "type", type: "select", value: p.type || "hosting", options: [["hosting", "Hosting (creates a Berth account)"], ["other", "Other (set up by hand)"]] })}
-        ${plans.length
-          ? field({ label: "Berth plan", name: "berth_plan", type: "select", value: p.berth_plan, options: [["", "No plan (no limits)"], ...plans.map((x) => [x.name, x.name])] })
-          : field({ label: "Berth plan name", name: "berth_plan", value: p.berth_plan, optional: true, hint: planErr ? `Couldn't load plans: ${planErr}` : "Connect Berth in Settings to pick from a list." })}
+        <div class="field"><label for="f_berth_plan">Berth plan <small>optional</small></label>
+          <input id="f_berth_plan" name="berth_plan" value="${p.berth_plan || ""}" list="berth-plans" autocomplete="off">
+          <datalist id="berth-plans">${plans.map((x) => html`<option value="${x.name}">`)}</datalist>
+          <small class="hint">${planErr ? `Couldn't load Berth's plans: ${planErr}` : berthReady(c.s) ? "Pick one of Berth's plans, or type a new name and set its limits below." : "Connect Berth in Settings to send plans to it."}</small></div>
       </div>
       <fieldset><legend>Prices <small class="muted">leave blank for cycles you don't offer</small></legend><div class="grid4">
         ${field({ label: "Monthly", name: "price_monthly", type: "money", value: p.price_monthly })}
@@ -247,12 +248,63 @@ export default function (r) {
         ${field({ label: "Annually", name: "price_annually", type: "money", value: p.price_annually })}
         ${field({ label: "One-off", name: "price_once", type: "money", value: p.price_once })}
       </div></fieldset>
+      ${limitsFieldset(p)}
       <div class="grid2">${field({ label: "Set-up fee", name: "setup_fee", type: "money", value: p.setup_fee || "" })}${field({ label: "Sort order", name: "sort", type: "number", value: p.sort ?? 0 })}</div>
       ${field({ type: "checkbox", name: "needs_domain", value: p.needs_domain ?? 1, label: "Ask for a domain name when ordering" })}
       ${field({ type: "checkbox", name: "visible", value: p.visible ?? 1, label: "Show on the order page" })}
       <div class="btn-row"><button class="btn btn-primary">Save product</button>${p.id ? html`<a class="btn" href="/admin/products">Cancel</a>` : ""}</div>
     </form></section>`;
   };
+
+  const limitsFieldset = (p) => {
+    const l = parseLimits(p.berth_limits);
+    return html`<fieldset><legend>Berth plan limits <small class="muted">sent to Berth when you save; blank or 0 means no limit</small></legend>
+      <p class="small muted">For the whole account:</p>
+      <div class="grid3">${PLAN_LIMITS.filter((x) => x[2] === "account").map(([k, label]) => field({ label, name: `lim_${k}`, type: "number", min: 0, value: l[k] || "" }))}</div>
+      <p class="small muted">For each website:</p>
+      <div class="grid3">${PLAN_LIMITS.filter((x) => x[2] === "site").map(([k, label]) => field({ label, name: `lim_${k}`, type: "number", min: 0, value: l[k] || "" }))}</div>
+      <div class="btn-row">${PLAN_FLAGS.map(([k, label]) => field({ type: "checkbox", name: `lim_${k}`, value: l[k] ? 1 : 0, label }))}</div>
+    </fieldset>`;
+  };
+
+  const limitsFrom = (f) => {
+    const out = {};
+    for (const [k] of PLAN_LIMITS) {
+      const n = parseInt(f.get(`lim_${k}`), 10);
+      if (n > 0) out[k] = n;
+    }
+    for (const [k] of PLAN_FLAGS) if (f.get(`lim_${k}`) === "1") out[k] = true;
+    return Object.keys(out).length ? JSON.stringify(out) : "";
+  };
+
+  // Sends the product's plan to Berth when it has one and limits. Returns a note for the flash message.
+  const syncPlan = async (c, p) => {
+    if (p.type !== "hosting" || !p.berth_plan || !p.berth_limits || !berthReady(c.s)) return "";
+    try {
+      await pushPlan(c.s, p);
+      return ` Berth plan “${p.berth_plan}” is up to date.`;
+    } catch (e) {
+      return ` But Berth didn't take the plan: ${e.message}`;
+    }
+  };
+
+  r.post("/admin/products/push-berth", S, A, async (c) => {
+    if (!berthReady(c.s)) return redirect("/admin/products", "Connect Berth in Settings first.", "err");
+    const rows = await all(c.env, "SELECT * FROM products WHERE type = 'hosting' AND berth_plan != '' AND berth_limits != '' ORDER BY sort, id");
+    if (!rows.length) return redirect("/admin/products", "No products have a Berth plan with limits yet.", "err");
+    const done = [];
+    const failed = [];
+    for (const p of rows) {
+      try {
+        await pushPlan(c.s, p);
+        done.push(p.berth_plan);
+      } catch (e) {
+        failed.push(`${p.berth_plan} (${e.message})`);
+      }
+    }
+    await log(c.env, c.actor, null, "products.berth_sync", done.join(", "));
+    return redirect("/admin/products", failed.length ? `Sent ${done.length}. Failed: ${failed.join("; ")}` : `Sent ${done.length} plan${done.length === 1 ? "" : "s"} to Berth: ${done.join(", ")}.`, failed.length ? "err" : "ok");
+  });
 
   const productFields = (f) => ({
     name: clean(f.get("name"), 120),
@@ -268,6 +320,7 @@ export default function (r) {
     sort: int(f.get("sort"), 0),
     needs_domain: f.get("needs_domain") === "1" ? 1 : 0,
     visible: f.get("visible") === "1" ? 1 : 0,
+    berth_limits: limitsFrom(f),
   });
 
   r.get("/admin/products/new", S, A, async (c) => adminPage(c, { title: "New product", active: "products", body: await productForm(c, {}) }));
@@ -280,7 +333,7 @@ export default function (r) {
     o.created_at = nowIso();
     const keys = Object.keys(o);
     await insert(c.env, `INSERT INTO products (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`, ...keys.map((k) => o[k]));
-    return redirect("/admin/products", "Product added.");
+    return redirect("/admin/products", "Product added." + (await syncPlan(c, o)), "ok");
   });
 
   r.get("/admin/products/:id", S, A, async (c) => {
@@ -296,7 +349,7 @@ export default function (r) {
     if (!o.name) return redirect(`/admin/products/${p.id}`, "Give it a name.", "err");
     if (o.slug && (await one(c.env, "SELECT id FROM products WHERE slug = ? AND id != ?", o.slug, p.id))) return redirect(`/admin/products/${p.id}`, "Another product already uses that web address name.", "err");
     await update(c.env, "products", p.id, o);
-    return redirect("/admin/products", "Saved. Existing services keep their own price.");
+    return redirect("/admin/products", "Saved. Existing services keep their own price." + (await syncPlan(c, o)), "ok");
   });
 }
 
