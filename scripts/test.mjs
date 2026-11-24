@@ -257,7 +257,7 @@ assert.equal(see(r, "product"), "/admin/products");
 
 // ---- a client signs up and orders ----------------------------------------------------------
 const alice = browser();
-r = await alice.post("/register", { first_name: "Alice", last_name: "Smith", email: "Alice@Example.com", address1: "2 Low St", city: "Winchester", postcode: "SO23 1AA", country: "United Kingdom", password: "alice-password-1" });
+r = await alice.post("/register", { first_name: "Alice", last_name: "Smith", email: "Alice@Example.com", address1: "2 Low St", city: "Winchester", postcode: "SO23 1AA", country: "United Kingdom", password: "alice-password-1", terms: "1" });
 assert.equal(see(r, "register"), "/");
 r = await alice.get("/");
 ok200(r, "client dashboard");
@@ -268,10 +268,15 @@ see(await alice.get(new URL(verify).pathname), "verify");
 r = await alice.get("/order");
 assert.match(r.text_, /Starter hosting/);
 r = await alice.get("/order/1");
+// The client area wears the website's header, menu and footer.
+assert.match(r.text_, /class="site-head"/);
+assert.match(r.text_, /href="https:\/\/ratlan\.net\/hosting\/"/);
+assert.match(r.text_, /class="acct-tabs"/);
+// Ordering goes straight to card payment.
 r = await alice.submit("/order/1", "/order/1", { cycle: "monthly", label: "https://Alice-Shop.co.uk/" });
-const invPath = see(r, "order");
-assert.match(invPath, /^\/invoices\/\d+$/);
-const invId = Number(invPath.split("/")[2]);
+assert.equal(see(r, "order"), "https://checkout.stripe.test/cs_test_1");
+const invId = (await env.DB.prepare("SELECT MAX(id) AS id FROM invoices").first()).id;
+const invPath = `/invoices/${invId}`;
 r = await alice.get(invPath);
 ok200(r, "invoice page");
 assert.match(r.text_, /£5\.00 to pay/);
@@ -323,7 +328,7 @@ r = await alice.submit("/services/1", "/services/1/panel");
 assert.equal(see(r, "panel"), "https://berth.test/sso/abc");
 // Another client can't see it.
 const bob = browser();
-see(await bob.post("/register", { first_name: "Bob", last_name: "B", email: "bob@example.com", address1: "x", city: "y", postcode: "z", password: "bob-password-12" }), "bob");
+see(await bob.post("/register", { first_name: "Bob", last_name: "B", email: "bob@example.com", address1: "x", city: "y", postcode: "z", password: "bob-password-12", terms: "1" }), "bob");
 assert.equal((await bob.get("/services/1")).status, 404);
 assert.equal((await bob.get(invPath)).status, 404);
 
@@ -466,6 +471,44 @@ const sup = browser();
 see(await sup.post("/admin/login", { email: "sup@purser.test", password: "support-password" }), "support login");
 assert.equal((await sup.get("/admin/settings")).status, 403);
 ok200(await sup.get("/admin/tickets"), "support tickets");
+
+// ---- ordering from the website without an account --------------------------------------------
+r = await admin.submit("/admin/products/new", "/admin/products/new", {
+  name: "Plus", slug: "Plus", description: "5 websites\n30 GB storage", type: "hosting", berth_plan: "Starter",
+  price_monthly: "2.99", price_annually: "29.90", setup_fee: "", sort: "2", needs_domain: "1", visible: "1",
+});
+assert.equal(see(r, "slug product"), "/admin/products");
+r = await admin.submit("/admin/products/new", "/admin/products/new", { name: "Dupe", slug: "plus", price_monthly: "1", type: "other" });
+assert.match(see(r, "dupe slug"), /products\/new/);
+const guest = browser();
+r = await guest.get("/order/plus?cycle=annually");
+ok200(r, "guest order page");
+assert.match(r.text_, /class="site-head"/);
+assert.match(r.text_, /£29\.90/);
+assert.match(r.text_, /value="annually" checked/);
+assert.match(r.text_, /name="first_name"/);
+assert.match(r.text_, /17% less than monthly/);
+ok200(await guest.get("/order"), "guest catalogue");
+const guestForm = { cycle: "annually", label: "www.dana.dev", first_name: "Dana", last_name: "C", email: "dana@example.com", address1: "3 Mid St", city: "Romsey", postcode: "SO51 1AA", password: "dana-password-1", save_card: "1" };
+r = await guest.post("/order/plus", guestForm);
+assert.match(see(r, "guest no terms"), /\/order\/plus\?cycle=annually/);
+r = await guest.post("/order/plus", { ...guestForm, terms: "1" });
+assert.equal(see(r, "guest order"), "https://checkout.stripe.test/cs_test_1");
+const webClient = await env.DB.prepare("SELECT * FROM clients WHERE email = 'dana@example.com'").first();
+const webSvc = await env.DB.prepare("SELECT s.*, p.slug FROM services s JOIN products p ON p.id = s.product_id WHERE s.client_id = ?").bind(webClient.id).first();
+assert.equal(webSvc.slug, "plus");
+assert.equal(webSvc.label, "dana.dev");
+assert.equal(webSvc.price, 2990);
+assert.equal(webSvc.cycle, "annually");
+r = await guest.get("/");
+ok200(r, "guest is signed in after ordering");
+assert.match(r.text_, /Dana/);
+// Someone who already has an account is sent to sign in.
+r = await browser().post("/order/plus", { ...guestForm, terms: "1" });
+assert.match(see(r, "existing email"), /^\/login\?next=/);
+// Sign-in page uses the website layout too, staff sign-in doesn't.
+assert.match((await browser().get("/login")).text_, /class="site-foot"/);
+assert.doesNotMatch((await browser().get("/admin/login")).text_, /class="site-foot"/);
 
 // Migrations are idempotent.
 resetMigrationState();

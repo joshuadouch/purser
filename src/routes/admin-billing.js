@@ -213,7 +213,7 @@ export default function (r) {
       title: "Products", active: "products",
       topActions: html`<a class="btn btn-primary btn-sm" href="/admin/products/new">${icon("plus")}<span class="hide-sm">New product</span></a>`,
       body: html`<section class="card">${rows.length ? html`<table class="table"><thead><tr><th>Product</th><th class="hide-sm">Type</th><th>Prices</th><th class="hide-sm">In use</th><th></th></tr></thead><tbody>
-      ${rows.map((p) => html`<tr data-href="/admin/products/${p.id}"><td><a href="/admin/products/${p.id}"><b>${p.name}</b></a>${p.berth_plan ? html`<small class="block muted">Berth plan: ${p.berth_plan}</small>` : ""}</td><td class="hide-sm">${p.type === "hosting" ? "Hosting (Berth)" : "Other"}</td>
+      ${rows.map((p) => html`<tr data-href="/admin/products/${p.id}"><td><a href="/admin/products/${p.id}"><b>${p.name}</b></a>${p.slug ? html`<small class="block muted">/order/${p.slug}</small>` : ""}${p.berth_plan ? html`<small class="block muted">Berth plan: ${p.berth_plan}</small>` : ""}</td><td class="hide-sm">${p.type === "hosting" ? "Hosting (Berth)" : "Other"}</td>
       <td>${Object.keys(CYCLES).filter((k) => p[`price_${k}`] !== null).map((k) => html`<span class="nowrap">${money(p[`price_${k}`])}${CYCLES[k].per}</span> `)}</td><td class="hide-sm">${p.used}</td><td>${p.visible ? "" : badge("closed", "Hidden")}</td></tr>`)}
       </tbody></table>` : empty("No products yet. Add the hosting plans you sell.", html`<a class="btn btn-primary btn-sm" href="/admin/products/new">Add a product</a>`)}</section>`,
     });
@@ -230,7 +230,10 @@ export default function (r) {
       }
     }
     return html`<section class="card narrow"><form method="post" class="stack">${csrf(c)}
-      ${field({ label: "Name", name: "name", value: p.name, required: true })}
+      <div class="grid2">
+        ${field({ label: "Name", name: "name", value: p.name, required: true })}
+        ${field({ label: "Web address name", name: "slug", value: p.slug, optional: true, placeholder: "starter", hint: html`Lets the website link to <code>/order/${p.slug || "starter"}</code>. Lowercase letters, numbers and dashes.` })}
+      </div>
       ${field({ label: "Description", name: "description", type: "textarea", rows: 5, value: p.description, hint: "Shown on the order page. One feature per line works well." })}
       <div class="grid2">
         ${field({ label: "Type", name: "type", type: "select", value: p.type || "hosting", options: [["hosting", "Hosting (creates a Berth account)"], ["other", "Other (set up by hand)"]] })}
@@ -253,6 +256,7 @@ export default function (r) {
 
   const productFields = (f) => ({
     name: clean(f.get("name"), 120),
+    slug: clean(f.get("slug"), 40).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || null,
     description: clean(f.get("description"), 4000),
     type: f.get("type") === "other" ? "other" : "hosting",
     berth_plan: clean(f.get("berth_plan"), 100),
@@ -271,6 +275,7 @@ export default function (r) {
   r.post("/admin/products/new", S, A, async (c) => {
     const o = productFields(c.form);
     if (!o.name) return redirect("/admin/products/new", "Give it a name.", "err");
+    if (o.slug && (await one(c.env, "SELECT id FROM products WHERE slug = ?", o.slug))) return redirect("/admin/products/new", "Another product already uses that web address name.", "err");
     if (![o.price_monthly, o.price_quarterly, o.price_annually, o.price_once].some((x) => x !== null)) return redirect("/admin/products/new", "Enter at least one price.", "err");
     o.created_at = nowIso();
     const keys = Object.keys(o);
@@ -289,6 +294,7 @@ export default function (r) {
     if (!p) return notFound(c);
     const o = productFields(c.form);
     if (!o.name) return redirect(`/admin/products/${p.id}`, "Give it a name.", "err");
+    if (o.slug && (await one(c.env, "SELECT id FROM products WHERE slug = ? AND id != ?", o.slug, p.id))) return redirect(`/admin/products/${p.id}`, "Another product already uses that web address name.", "err");
     await update(c.env, "products", p.id, o);
     return redirect("/admin/products", "Saved. Existing services keep their own price.");
   });

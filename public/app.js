@@ -29,3 +29,18 @@ document.addEventListener("submit", (e) => {
     form.dataset.sent = "1";
   }
 });
+
+// Website header menu on small screens.
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-site-menu]");
+  if (!b) return;
+  const open = document.querySelector(".site-head").classList.toggle("open");
+  b.setAttribute("aria-expanded", open);
+});
+
+// Order page: the summary follows the chosen billing period.
+document.addEventListener("change", (e) => {
+  if (!e.target.closest("[data-cycle-pick]")) return;
+  const v = e.target.value;
+  document.querySelectorAll("[data-cycle-line]").forEach((el) => (el.hidden = el.dataset.cycleLine !== v));
+});

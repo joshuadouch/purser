@@ -4,10 +4,18 @@ import { all, run } from "./db.js";
 // (env var of the same name in upper case), which win over the stored value.
 export const DEFAULTS = {
   company_name: "Ratlan",
+  // The public website the client area sits inside. When set, client pages and
+  // sign-in use the website's header and footer instead of the admin-style sidebar.
+  site_url: "https://ratlan.net",
+  // Website menu, one "Label|URL" per line. Relative URLs are on site_url.
+  site_links: "Hosting|/hosting/\nWordPress|/wordpress/\nEmail|/email/\nFree migration|/migrations/\nHelp|/contact/",
+  // Footer links, same format.
+  footer_links: "Terms|/legal/terms/\nPrivacy|/legal/privacy/\nAcceptable use|/legal/acceptable-use/\nHelp|/contact/",
+  logo_url: "/brand/logo.svg",
   company_address: "",
   company_email: "",
   company_vat: "",
-  brand_color: "#5b3df5",
+  brand_color: "#d93a12",
   currency: "GBP",
   tax_enabled: "0",
   tax_rate: "20",
@@ -34,7 +42,7 @@ export const DEFAULTS = {
   berth_panel_name: "control panel",
   turnstile_site_key: "",
   turnstile_secret: "",
-  terms_url: "",
+  terms_url: "https://ratlan.net/legal/terms/",
 };
 
 export const SECRET_KEYS = ["stripe_secret_key", "stripe_webhook_secret", "berth_token", "turnstile_secret"];

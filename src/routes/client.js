@@ -2,8 +2,8 @@
 import { html, raw, textBlock } from "../lib/html.js";
 import { all, one, run, update } from "../lib/db.js";
 import { hashPassword, passwordProblem, verifyPassword } from "../lib/auth.js";
-import { notFound, redirect, requireClient } from "../lib/http.js";
-import { badge, clientPage, csrf, cycleLabel, dateCell, empty, field, icon, invoiceBadge, priceLabel, stat } from "../lib/ui.js";
+import { notFound, optionalClient, redirect, requireClient } from "../lib/http.js";
+import { badge, clientPage, publicPage, csrf, cycleLabel, dateCell, empty, field, icon, invoiceBadge, priceLabel, stat } from "../lib/ui.js";
 import {
   applyCredit, checkoutForCard, checkoutForInvoice, getInvoice, getItems, getService, handleCheckoutSession, log, notifyAdmin,
   placeOrder, productCycles, productPrice, baseUrl,
@@ -11,6 +11,7 @@ import {
 import { accountRef, berth, berthReady } from "../lib/berth.js";
 import { stripe } from "../lib/stripe.js";
 import { CYCLES, clean, fmtDate, fullName, money, nowIso, today } from "../lib/util.js";
+import { accountFields, signUp } from "../lib/signup.js";
 
 export default function (r) {
   const C = requireClient;
@@ -224,56 +225,118 @@ export default function (r) {
   });
 
   // ---- ordering ------------------------------------------------------------------
-  r.get("/order", C, async (c) => {
+  // Open to everyone: the website's plan buttons link straight here
+  // (/order/<slug>?cycle=monthly|annually). Guests create their account on the
+  // same page, then go straight to card payment.
+  const O = optionalClient;
+  const findProduct = (c, ref) =>
+    one(c.env, "SELECT * FROM products WHERE visible = 1 AND (slug = ? OR CAST(id AS TEXT) = ?)", String(ref).toLowerCase(), String(ref));
+  const features = (p) => String(p.description || "").split("\n").map((l) => l.replace(/^[-*•]\s*/, "").trim()).filter(Boolean);
+  const perLong = { monthly: "month", quarterly: "quarter", annually: "year" };
+
+  r.get("/order", O, async (c) => {
     const products = await all(c.env, "SELECT * FROM products WHERE visible = 1 ORDER BY sort, id");
-    return clientPage(c, {
-      title: "Order", active: "order", topActions: "",
+    return publicPage(c, {
+      title: "Order", active: "order",
       body: products.length
         ? html`<div class="products">${products.map((p) => {
             const cycles = productCycles(p);
             const cheapest = cycles[0];
+            const f = features(p);
             return html`<section class="card product"><h3>${p.name}</h3>
               <div class="price">${cheapest ? priceLabel(productPrice(p, cheapest), cheapest) : ""}</div>
-              <div class="product-desc">${textBlock(p.description)}</div>
+              ${f.length > 1 ? html`<ul class="feat">${f.map((x) => html`<li>${icon("check")}<span>${x}</span></li>`)}</ul>` : html`<div class="product-desc">${textBlock(p.description)}</div>`}
               ${p.setup_fee ? html`<p class="small muted">Plus ${money(p.setup_fee)} set-up</p>` : ""}
-              <a class="btn btn-primary btn-block" href="/order/${p.id}">Choose</a></section>`;
+              <a class="btn btn-primary btn-block" href="/order/${p.slug || p.id}">Choose ${p.name}</a></section>`;
           })}</div>`
         : html`<section class="card">${empty("There's nothing to order online right now. Open a ticket and we'll help.")}</section>`,
     });
   });
 
-  r.get("/order/:id", C, async (c) => {
-    const p = await one(c.env, "SELECT * FROM products WHERE id = ? AND visible = 1", Number(c.params.id));
+  r.get("/order/:id", O, async (c) => {
+    const p = await findProduct(c, c.params.id);
     if (!p) return notFound(c);
     const cycles = productCycles(p);
-    return clientPage(c, {
-      title: `Order ${p.name}`, active: "order", topActions: "",
-      body: html`<section class="card narrow"><div class="card-head"><h3>${p.name}</h3></div>
-      <div class="product-desc">${textBlock(p.description)}</div>
-      <form method="post" class="stack">${csrf(c)}
-        <fieldset class="cycles"><legend>How would you like to pay?</legend>
-        ${cycles.map((cy, i) => html`<label class="cycle"><input type="radio" name="cycle" value="${cy}" ${i === 0 ? raw("checked") : ""}><span><b>${CYCLES[cy].label}</b>${priceLabel(productPrice(p, cy), cy)}</span></label>`)}
-        </fieldset>
-        ${p.needs_domain ? field({ label: "Domain name", name: "label", required: true, placeholder: "example.co.uk", hint: "The main website address for this service. You can add more later." }) : field({ label: "Reference", name: "label", optional: true })}
+    const want = c.url.searchParams.get("cycle");
+    const picked = cycles.includes(want) ? want : cycles[0];
+    const f = features(p);
+    const guest = !c.client;
+    const canRegister = c.s.allow_registration === "1";
+    const next = encodeURIComponent(c.url.pathname + c.url.search);
+    const summary = html`<aside class="card summary">
+      <div class="eyebrow">Your order</div>
+      <h3>${p.name}</h3>
+      ${f.length ? html`<ul class="feat">${f.map((x) => html`<li>${icon("check")}<span>${x}</span></li>`)}</ul>` : ""}
+      <dl class="sum-lines">
+        ${cycles.map((cy) => html`<div data-cycle-line="${cy}"${cy === picked ? "" : raw(" hidden")}><dt>${CYCLES[cy].label}</dt><dd>${money(productPrice(p, cy))}</dd></div>`)}
+        ${p.setup_fee ? html`<div><dt>Set-up</dt><dd>${money(p.setup_fee)}</dd></div>` : ""}
+      </dl>
+      ${cycles.map((cy) => html`<div class="sum-total" data-cycle-line="${cy}"${cy === picked ? "" : raw(" hidden")}><span>Due today</span><b>${money(productPrice(p, cy) + (p.setup_fee || 0))}</b></div>
+        ${perLong[cy] ? html`<p class="small muted" data-cycle-line="${cy}"${cy === picked ? "" : raw(" hidden")}>Then ${money(productPrice(p, cy))} a ${perLong[cy]}, the same price every time it renews. Cancel any time.</p>` : ""}`)}
+    </aside>`;
+    const form = html`<form method="post" class="stack order-form">${csrf(c)}
+        <section class="card">
+          <h3 class="step-title"><span>1</span>How would you like to pay?</h3>
+          <fieldset class="cycles" data-cycle-pick><legend class="sr">Billing period</legend>
+          ${cycles.map((cy) => html`<label class="cycle"><input type="radio" name="cycle" value="${cy}" ${cy === picked ? raw("checked") : ""}><span><b>${CYCLES[cy].label}</b>${priceLabel(productPrice(p, cy), cy)}${cy === "annually" && p.price_monthly ? html`<em>${Math.round(100 - (productPrice(p, cy) / (p.price_monthly * 12)) * 100)}% less than monthly</em>` : ""}</span></label>`)}
+          </fieldset>
+        </section>
+        <section class="card">
+          <h3 class="step-title"><span>2</span>${p.needs_domain ? "Your domain" : "Reference"}</h3>
+          ${p.needs_domain ? field({ label: "Domain name", name: "label", required: true, placeholder: "example.co.uk", hint: "The main address for your website. Keep it registered wherever it is now, you can add more domains later." }) : field({ label: "Reference", name: "label", optional: true, hint: "Anything that helps you recognise this service." })}
+        </section>
+        ${guest
+          ? html`<section class="card">
+              <h3 class="step-title"><span>3</span>Your details</h3>
+              <p class="muted small">Already with us? <a href="/login?next=${next}">Sign in</a> and we'll fill this in.</p>
+              ${canRegister ? html`<div class="grid2">${accountFields(c)}</div>` : html`<p>New accounts are made by invitation. <a href="/login?next=${next}">Sign in</a> to order.</p>`}
+            </section>`
+          : ""}
         ${p.setup_fee ? html`<p class="small muted">A one-off set-up fee of ${money(p.setup_fee)} is added to the first invoice.</p>` : ""}
-        <button class="btn btn-primary btn-block">Continue to payment</button>
-      </form></section>`,
+        ${field({ type: "checkbox", name: "save_card", value: 1, label: "Save my card so renewals are paid automatically", hint: "You can remove it any time from your account." })}
+        <button class="btn btn-primary btn-lg btn-block"${guest && !canRegister ? raw(" disabled") : ""}>Continue to secure payment</button>
+        <p class="small muted center">${icon("shield")} Card payments are handled by Stripe. We never see your card number.</p>
+      </form>`;
+    return publicPage(c, {
+      title: `Order ${p.name}`, active: "order",
+      body: html`<div class="checkout">${form}${summary}</div>`,
     });
   });
 
-  r.post("/order/:id", C, async (c) => {
-    const p = await one(c.env, "SELECT * FROM products WHERE id = ? AND visible = 1", Number(c.params.id));
+  r.post("/order/:id", O, async (c) => {
+    const p = await findProduct(c, c.params.id);
     if (!p) return notFound(c);
+    const back = `/order/${p.slug || p.id}`;
     const cycle = c.form.get("cycle");
-    if (productPrice(p, cycle) === null) return redirect(`/order/${p.id}`, "Pick how you'd like to pay.", "err");
-    let label = clean(c.form.get("label"), 120).toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-    if (p.needs_domain && !/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(label)) return redirect(`/order/${p.id}`, "Enter a domain like example.co.uk.", "err");
+    if (productPrice(p, cycle) === null) return redirect(back, "Pick how you'd like to pay.", "err");
+    let label = clean(c.form.get("label"), 120).toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+    if (p.needs_domain && !/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(label)) return redirect(`${back}?cycle=${cycle}`, "Enter a domain like example.co.uk.", "err");
     if (!p.needs_domain) label = clean(c.form.get("label"), 120);
-    const pendingOrders = await one(c.env, "SELECT COUNT(*) AS n FROM services WHERE client_id = ? AND status = 'pending'", c.client.id);
-    if (pendingOrders.n >= 5) return redirect("/invoices", "You have several unpaid orders. Pay or cancel those first.", "err");
-    const { invoice } = await placeOrder(c.env, c.s, c.client, p, { cycle, label, actor: c.actor, ctx: c.ctx });
-    if (invoice.status === "paid") return redirect("/services", "Thanks! Your order is being set up.");
-    return redirect(`/invoices/${invoice.id}`, "Order placed. Pay the invoice below to get started.");
+    const cookies = [];
+    let client = c.client;
+    let actor = c.actor;
+    if (!client) {
+      if (c.s.allow_registration !== "1") return redirect(`/login?next=${encodeURIComponent(back)}`);
+      const res = await signUp(c, c.form);
+      if (res.error) return redirect(res.existing ? `/login?next=${encodeURIComponent(`${back}?cycle=${cycle}`)}` : `${back}?cycle=${cycle}`, res.error, "err");
+      client = res.client;
+      actor = { kind: "client", id: client.id, name: client.email };
+      cookies.push(res.cookie);
+    } else {
+      const pendingOrders = await one(c.env, "SELECT COUNT(*) AS n FROM services WHERE client_id = ? AND status = 'pending'", client.id);
+      if (pendingOrders.n >= 5) return redirect("/invoices", "You have several unpaid orders. Pay or cancel those first.", "err");
+    }
+    const { invoice } = await placeOrder(c.env, c.s, client, p, { cycle, label, actor, ctx: c.ctx });
+    if (invoice.status === "paid") return redirect("/services", "Thanks! Your order is being set up.", "ok", cookies);
+    if (c.s.stripe_secret_key) {
+      try {
+        const url = await checkoutForInvoice(c.env, c.s, client, invoice, { saveCard: c.form.get("save_card") === "1" });
+        return redirect(url, null, "ok", cookies);
+      } catch (e) {
+        console.error("checkout after order failed", e?.message || e);
+      }
+    }
+    return redirect(`/invoices/${invoice.id}`, "Order placed. Pay the invoice below to get started.", "ok", cookies);
   });
 
   // ---- account ---------------------------------------------------------------------

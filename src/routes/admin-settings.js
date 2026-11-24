@@ -107,7 +107,15 @@ export default function (r) {
           ${field({ label: "Brand colour", name: "brand_color", type: "color", value: s.brand_color })}
           ${field({ label: "Terms of service link", name: "terms_url", type: "url", value: s.terms_url, optional: true, hint: "Clients agree to it when they register." })}
         </div>
-        ${field({ type: "checkbox", name: "allow_registration", value: s.allow_registration, label: "Let new clients create an account" })}
+        ${field({ type: "checkbox", name: "allow_registration", value: s.allow_registration, label: "Let new clients create an account (and order without one)" })}
+        <fieldset><legend>Website <small class="muted">the client area wears your website's header and footer</small></legend><div class="stack">
+          ${field({ label: "Website address", name: "site_url", type: "url", value: s.site_url, optional: true, placeholder: "https://example.net", hint: "Leave blank for the plain sidebar layout." })}
+          ${field({ label: "Logo", name: "logo_url", value: s.logo_url, optional: true, hint: "An image address, e.g. /brand/logo.svg. Blank shows the business name." })}
+          <div class="grid2">
+            ${field({ label: "Menu links", name: "site_links", type: "textarea", rows: 6, value: s.site_links, hint: "One per line: Label|/path or Label|https://…" })}
+            ${field({ label: "Footer links", name: "footer_links", type: "textarea", rows: 6, value: s.footer_links, hint: "Same format." })}
+          </div>
+        </div></fieldset>
         <fieldset><legend>Turnstile <small class="muted">bot check on sign-in and sign-up</small></legend><div class="grid2">
           ${field({ label: "Site key", name: "turnstile_site_key", value: s.turnstile_site_key, optional: true })}
           ${secretField(c, "turnstile_secret", "Secret key")}
@@ -121,7 +129,7 @@ export default function (r) {
   });
 
   const FIELDS = {
-    general: ["company_name", "company_address", "company_email", "company_vat", "mail_from_name", "brand_color", "terms_url", "turnstile_site_key", "turnstile_secret"],
+    general: ["company_name", "company_address", "company_email", "company_vat", "mail_from_name", "brand_color", "terms_url", "turnstile_site_key", "turnstile_secret", "site_url", "logo_url", "site_links", "footer_links"],
     billing: ["invoice_prefix", "next_invoice_number", "invoice_days_before", "payment_terms_days", "reminder_before_days", "overdue_reminders", "suspend_after_days", "terminate_after_days", "auto_charge_retry_days", "tax_label", "tax_rate", "bank_details"],
     payments: ["stripe_secret_key", "stripe_webhook_secret", "currency"],
     berth: ["berth_url", "berth_token", "berth_panel_name"],
@@ -143,6 +151,8 @@ export default function (r) {
     if (values.berth_url) values.berth_url = values.berth_url.replace(/\/+$/, "");
     if (values.berth_url && !/^https?:\/\//.test(values.berth_url)) return redirect(`/admin/settings?tab=${tab}`, "The Berth address should start with https://", "err");
     if (values.next_invoice_number && !/^\d+$/.test(values.next_invoice_number)) return redirect(`/admin/settings?tab=${tab}`, "The next invoice number must be a number.", "err");
+    if (values.site_url) values.site_url = values.site_url.replace(/\/+$/, "");
+    if (values.site_url && !/^https?:\/\//.test(values.site_url)) return redirect(`/admin/settings?tab=${tab}`, "The website address should start with https://", "err");
     if (values.brand_color && !/^#[0-9a-f]{6}$/i.test(values.brand_color)) delete values.brand_color;
     await saveSettings(c.env, values);
     await log(c.env, c.actor, null, "settings.saved", tab);

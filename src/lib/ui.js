@@ -2,7 +2,7 @@
 import { html, raw, esc } from "./html.js";
 import { CYCLES, fmtDate, initials, money, pounds } from "./util.js";
 
-export const ASSET_V = "3";
+export const ASSET_V = "5";
 
 const I = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
@@ -40,10 +40,11 @@ const head = (c, title) => html`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title} · ${c.s.company_name}</title>
+<meta name="theme-color" content="#fff8f2">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css?v=${ASSET_V}">
 ${c.s.brand_color && /^#[0-9a-f]{6}$/i.test(c.s.brand_color) ? raw(`<style>:root{--accent:${c.s.brand_color}}</style>`) : ""}
 <script src="/app.js?v=${ASSET_V}" defer></script>
@@ -63,7 +64,7 @@ function nav(items, active) {
 }
 
 function shell(c, { title, active, body, groups, home, who, sub, logout, banner, topActions, kicker }) {
-  const brand = html`<a class="brand" href="${home}"><span class="brand-mark">${icon("anchor")}</span><span>${c.s.company_name}</span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
+  const brand = html`<a class="brand" href="${home}"><span class="brand-mark"><img src="/favicon.svg" alt=""></span><span>${c.s.company_name}</span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
   return new Response(
     String(html`${head(c, title)}
 <body class="app">
@@ -90,8 +91,98 @@ ${banner || ""}
   );
 }
 
+// ---- website layout --------------------------------------------------------------
+// The client area dressed as part of the public website: same header, menu and
+// footer, so customers never feel they've left it.
+export const usesSite = (s) => /^https?:\/\//.test(s.site_url || "");
+const siteHref = (s, u) => (/^(https?:|mailto:)/.test(u) ? u : s.site_url.replace(/\/+$/, "") + (u.startsWith("/") ? u : "/" + u));
+const linkLines = (s, v) =>
+  String(v || "")
+    .split("\n")
+    .map((l) => l.split("|").map((x) => x.trim()))
+    .filter(([l, u]) => l && u)
+    .map(([label, u]) => ({ label, href: siteHref(s, u) }));
+
+function logo(c) {
+  return c.s.logo_url
+    ? html`<img src="${c.s.logo_url}" alt="${c.s.company_name}" height="38">`
+    : html`<span class="brand-mark"><img src="/favicon.svg" alt=""></span><b>${c.s.company_name}</b>`;
+}
+
+function siteHeader(c, { signedIn }) {
+  const links = linkLines(c.s, c.s.site_links);
+  return html`<a class="skip" href="#main">Skip to content</a>
+<header class="site-head">
+  <div class="site-wrap head-in">
+    <a class="site-logo" href="${c.s.site_url}" aria-label="${c.s.company_name} home">${logo(c)}</a>
+    <nav class="site-nav" aria-label="Website">${links.map((l) => html`<a href="${l.href}">${l.label}</a>`)}</nav>
+    <div class="head-cta">${signedIn
+      ? html`<a class="btn btn-sm${c.url.pathname === "/" ? " btn-primary" : ""}" href="/">${icon("user")}<span>Your account</span></a><form method="post" action="/logout" class="inline">${csrf(c)}<button class="icon-btn" title="Sign out" aria-label="Sign out">${icon("logout")}</button></form>`
+      : html`<a class="login" href="/login">Log in</a><a class="btn btn-primary btn-sm" href="${siteHref(c.s, "/hosting/#plans")}">Get started</a>`}</div>
+    <button class="icon-btn site-menu-btn" aria-label="Menu" aria-expanded="false" data-site-menu>${icon("menu")}</button>
+  </div>
+</header>`;
+}
+
+function siteFooter(c) {
+  const links = linkLines(c.s, c.s.footer_links);
+  return html`<footer class="site-foot"><div class="site-wrap foot-in">
+  <a class="site-logo" href="${c.s.site_url}">${logo(c)}</a>
+  <nav aria-label="Footer">${links.map((l) => html`<a href="${l.href}">${l.label}</a>`)}</nav>
+  <small>© ${new Date().getUTCFullYear()} ${c.s.company_name}. Payments are handled securely by Stripe.</small>
+</div></footer>`;
+}
+
+function sitePage(c, { title, body, signedIn, tabs, pageHead, cls }) {
+  return new Response(
+    String(html`${head(c, title)}
+<body class="site${cls ? " " + cls : ""}">
+${c.session?.staff_id && c.client ? html`<div class="impersonate">Signed in as ${c.client.email} from the admin area. <a href="/admin/clients/${c.client.id}">Back to admin</a></div>` : ""}
+${siteHeader(c, { signedIn })}
+${tabs || ""}
+<main id="main" class="site-main"><div class="site-wrap">${pageHead || ""}${flashBox(c)}${body}</div></main>
+${siteFooter(c)}
+</body></html>`),
+    { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+  );
+}
+
+const CLIENT_TABS = [
+  ["home", "/", "home", "Overview"],
+  ["services", "/services", "server", "Services"],
+  ["invoices", "/invoices", "file", "Invoices", "unpaid"],
+  ["tickets", "/tickets", "help", "Support", "answered"],
+  ["order", "/order", "cart", "Order"],
+  ["account", "/account", "user", "Account"],
+];
+
+function clientTabs(c, active) {
+  const acct = ["account", "payment", "security"].includes(active) ? "account" : active;
+  return html`<nav class="acct-tabs" aria-label="Your account"><div class="site-wrap"><div class="acct-tabs-in">${CLIENT_TABS.map(
+    ([id, href, ic, label, count]) =>
+      html`<a href="${href}"${acct === id ? raw(' class="on" aria-current="page"') : ""}>${icon(ic)}<span>${label}</span>${count && c.counts?.[count] ? html`<b class="count">${c.counts[count]}</b>` : ""}</a>`,
+  )}</div></div></nav>`;
+}
+
+const ACCOUNT_SUB = [
+  ["account", "/account", "My details"],
+  ["payment", "/account/payment", "Payment method"],
+  ["security", "/account/security", "Security"],
+];
+
 export function clientPage(c, { title, active, body, topActions }) {
   const cl = c.client;
+  if (usesSite(c.s)) {
+    const sub = ["account", "payment", "security"].includes(active)
+      ? html`<div class="tabs">${ACCOUNT_SUB.map(([id, href, l]) => html`<a class="${active === id ? "on" : ""}" href="${href}">${l}</a>`)}</div>`
+      : "";
+    return sitePage(c, {
+      title, signedIn: true,
+      tabs: clientTabs(c, active),
+      pageHead: html`<div class="page-head"><h1>${title}</h1><div class="top-actions">${topActions ?? html`<a class="btn btn-primary btn-sm" href="/order">${icon("plus")}<span>Order</span></a>`}</div></div>${sub}`,
+      body,
+    });
+  }
   const banner = c.session?.staff_id
     ? html`<div class="impersonate">Signed in as ${cl.email} from the admin area. <a href="/admin/clients/${cl.id}">Back to admin</a></div>`
     : "";
@@ -165,12 +256,24 @@ export function adminPage(c, { title, active, body, topActions }) {
   });
 }
 
+// A page anyone can see (ordering) in the website layout, signed in or not.
+export function publicPage(c, { title, body, active }) {
+  if (c.client) return clientPage(c, { title, active, body, topActions: "" });
+  return sitePage(c, { title, signedIn: false, pageHead: html`<div class="page-head"><h1>${title}</h1></div>`, body });
+}
+
 export function authPage(c, { title, body, wide }) {
+  if (usesSite(c.s) && !c.url.pathname.startsWith("/admin")) {
+    return sitePage(c, {
+      title, signedIn: Boolean(c.client), cls: "site-auth",
+      body: html`<div class="auth-wrap${wide ? " wide" : ""}"><div class="auth-card"><h1>${title}</h1>${body}</div></div>`,
+    });
+  }
   return new Response(
     String(html`${head(c, title)}
 <body class="auth">
 <div class="auth-wrap${wide ? " wide" : ""}">
-  <div class="auth-brand"><span class="brand-mark">${icon("anchor")}</span>${c.s.company_name}</div>
+  <div class="auth-brand"><span class="brand-mark"><img src="/favicon.svg" alt=""></span>${c.s.company_name}</div>
   <div class="auth-card">
     <h1>${title}</h1>
     ${flashBox(c)}

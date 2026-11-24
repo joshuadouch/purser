@@ -97,7 +97,7 @@ export async function sendEmail(env, s, msg) {
 }
 
 function render(s, msg) {
-  const color = /^#[0-9a-f]{6}$/i.test(s.brand_color) ? s.brand_color : "#5b3df5";
+  const color = /^#[0-9a-f]{6}$/i.test(s.brand_color) ? s.brand_color : "#d93a12";
   const textParts = [];
   const htmlParts = [];
   for (const l of msg.lines) {
@@ -107,29 +107,30 @@ function render(s, msg) {
     } else if (l.button) {
       textParts.push(`${l.button.label}: ${l.button.url}`);
       htmlParts.push(
-        `<p style="margin:22px 0"><a href="${esc(l.button.url)}" style="background:${color};color:#fff;text-decoration:none;padding:11px 20px;border-radius:8px;font-weight:600;display:inline-block">${esc(l.button.label)}</a></p>`,
+        `<p style="margin:22px 0"><a href="${esc(l.button.url)}" style="background:${color};color:#fff;text-decoration:none;padding:11px 20px;border-radius:999px;font-weight:700;display:inline-block">${esc(l.button.label)}</a></p>`,
       );
     } else if (l.rows) {
       textParts.push(l.rows.map(([k, v]) => `${k}: ${v}`).join("\n"));
       htmlParts.push(
         `<table style="border-collapse:collapse;margin:0 0 16px;width:100%">${l.rows
-          .map(([k, v]) => `<tr><td style="padding:6px 12px 6px 0;color:#6b6785;white-space:nowrap">${esc(k)}</td><td style="padding:6px 0;font-weight:600">${esc(v)}</td></tr>`)
+          .map(([k, v]) => `<tr><td style="padding:6px 12px 6px 0;color:#5e5a66;white-space:nowrap">${esc(k)}</td><td style="padding:6px 0;font-weight:600">${esc(v)}</td></tr>`)
           .join("")}</table>`,
       );
     } else if (l.quote) {
       textParts.push(l.quote.split("\n").map((x) => "> " + x).join("\n"));
-      htmlParts.push(`<div style="border-left:3px solid #e3def7;padding:4px 0 4px 14px;margin:0 0 16px;color:#38345a;white-space:pre-wrap">${esc(l.quote)}</div>`);
+      htmlParts.push(`<div style="border-left:3px solid #e8dccf;padding:4px 0 4px 14px;margin:0 0 16px;color:#24242f;white-space:pre-wrap">${esc(l.quote)}</div>`);
     }
   }
   const footer = `${s.company_name}${s.company_address ? " · " + s.company_address.split("\n").join(", ") : ""}`;
   const text = [...textParts, "", "--", footer].join("\n\n").replace(/\n{3,}/g, "\n\n");
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f2fb;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1d1a33">
-<table role="presentation" width="100%" style="background:#f4f2fb;padding:28px 12px"><tr><td align="center">
-<table role="presentation" width="100%" style="max-width:560px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e7e3f5">
-<tr><td style="background:${color};background-image:linear-gradient(120deg,${color},#c03fb5);padding:20px 28px;color:#fff;font-size:18px;font-weight:700">${esc(s.company_name)}</td></tr>
+  const mark = /^https:\/\//.test(s.site_url || "") ? `<img src="${esc(s.site_url.replace(/\/+$/, ""))}/brand/mark-512.png" width="34" height="34" alt="" style="vertical-align:middle;border-radius:9px;margin-right:10px">` : "";
+  const html = `<!doctype html><html><body style="margin:0;background:#fff8f2;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#14141c">
+<table role="presentation" width="100%" style="background:#fff8f2;padding:28px 12px"><tr><td align="center">
+<table role="presentation" width="100%" style="max-width:560px;background:#fff;border-radius:18px;overflow:hidden;border:1px solid #e8dccf">
+<tr><td style="padding:22px 28px;border-bottom:4px solid ${color};font-size:20px;font-weight:800;letter-spacing:-.01em;color:#14141c">${mark}${esc(s.company_name)}</td></tr>
 <tr><td style="padding:28px;font-size:15px">${htmlParts.join("")}</td></tr>
 </table>
-<p style="color:#8a86a3;font-size:12px;margin:16px 0 0">${esc(footer)}</p>
+<p style="color:#5e5a66;font-size:12px;margin:16px 0 0">${esc(footer)}</p>
 </td></tr></table></body></html>`;
   return { text, html };
 }

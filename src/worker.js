@@ -52,7 +52,7 @@ export default {
       }
     } catch (e) {
       console.error("request failed", url.pathname, e?.stack || e);
-      c.s ||= { company_name: "Client area", brand_color: "#5b3df5" };
+      c.s ||= { company_name: "Client area", brand_color: "#d93a12" };
       res = withStatus(
         authPage(c, { title: "Something went wrong", body: html`<p>Sorry, that didn't work. Please try again in a moment.</p><p class="muted small">${String(e?.message || e).slice(0, 200)}</p><p><a class="btn" href="/">Go back</a></p>` }),
         500,
