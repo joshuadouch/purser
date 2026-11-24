@@ -4,7 +4,7 @@ import { all, batch, insert, one, run, stmt, update } from "./db.js";
 import { sendEmail } from "./email.js";
 import { nextInvoiceNumber } from "./settings.js";
 import { CYCLES, addDays, cycleEnd, fmtDate, fullName, money, nowIso, today } from "./util.js";
-import { BerthError, accountRef, berth, berthReady, externalId } from "./berth.js";
+import { BerthError, accountRef, berth, berthReady, externalId, parseLimits } from "./berth.js";
 import { cardLabel, stripe } from "./stripe.js";
 
 export const SYSTEM = { kind: "system", id: null, name: "System" };
@@ -265,6 +265,7 @@ export async function provisionService(env, s, svc, actor) {
     const accId = created.account?.id || created.account?.account?.id;
     await update(env, "services", svc.id, { berth_account: accId, berth_username: created.username, provision_error: null });
     await log(env, actor, svc.client_id, "service.provisioned", `Berth account ${accId}${created.username ? ` (${created.username})` : ""}`);
+    const mail = await provisionMail(env, s, { ...svc, berth_account: accId }, actor);
     if (!created.adopted) {
       await sendEmail(env, s, {
         to: client.email,
@@ -280,6 +281,9 @@ export async function provisionService(env, s, svc, actor) {
               ...(created.password ? [["Password", created.password]] : []),
             ],
           },
+          ...(mail?.domain
+            ? [`Email for ${mail.domain} is set up. Add your mailboxes on the Mail page of the control panel, then read your mail at ${mail.webmail || "webmail"} or in any mail app.`]
+            : []),
           "You can also sign in to the control panel straight from your client area, without a password.",
           { button: { label: "Open your client area", url: `${baseUrl(env)}/services/${svc.id}` } },
           "Please change your password after signing in. We'll never ask you for it.",
@@ -297,6 +301,31 @@ export async function provisionService(env, s, svc, actor) {
       { button: { label: "Open service", url: `${baseUrl(env)}/admin/services/${svc.id}` } },
     ]);
     return false;
+  }
+}
+
+// Sets the service's domain up as a mail domain in Berth when its plan
+// includes mail. Failures are recorded on the service and sent to the admin;
+// the hosting account itself is already made.
+export async function provisionMail(env, s, svc, actor) {
+  const product = svc.product_id ? await one(env, "SELECT berth_limits FROM products WHERE id = ?", svc.product_id) : null;
+  const limits = parseLimits(product?.berth_limits);
+  const domain = String(svc.label || "").trim().toLowerCase();
+  if (!(parseInt(limits.mail_domains, 10) > 0) || !/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(domain)) return null;
+  try {
+    const r = await berth(s, "POST", `/accounts/${accountRef(svc)}/plugins/mailcow`, { domain });
+    await log(env, actor, svc.client_id, "service.mail", `Mail domain ${domain}${r?.created === false ? " (already set up)" : ""}`);
+    return { domain, webmail: r?.webmail || "" };
+  } catch (e) {
+    const msg = `Mail domain ${domain}: ${String(e.message || e).slice(0, 400)}`;
+    await update(env, "services", svc.id, { provision_error: msg });
+    await log(env, actor, svc.client_id, "service.provision_failed", msg);
+    await notifyAdmin(env, s, "Setting up a mail domain failed", [
+      `The Berth account for service #${svc.id} was made, but adding ${domain} as a mail domain failed. Add it on Berth's Mail page, or fix the problem and press Set up again.`,
+      { quote: msg },
+      { button: { label: "Open service", url: `${baseUrl(env)}/admin/services/${svc.id}` } },
+    ]);
+    return null;
   }
 }
 

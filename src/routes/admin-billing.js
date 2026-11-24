@@ -263,6 +263,8 @@ export default function (r) {
       <div class="grid3">${PLAN_LIMITS.filter((x) => x[2] === "account").map(([k, label]) => field({ label, name: `lim_${k}`, type: "number", min: 0, value: l[k] || "" }))}</div>
       <p class="small muted">For each website:</p>
       <div class="grid3">${PLAN_LIMITS.filter((x) => x[2] === "site").map(([k, label]) => field({ label, name: `lim_${k}`, type: "number", min: 0, value: l[k] || "" }))}</div>
+      <p class="small muted">Email on mailcow (the customer's domain is set up as a mail domain when mail domains is 1 or more):</p>
+      <div class="grid3">${PLAN_LIMITS.filter((x) => x[2] === "mail").map(([k, label]) => field({ label, name: `lim_${k}`, type: "number", min: 0, value: l[k] || "" }))}</div>
       <div class="btn-row">${PLAN_FLAGS.map(([k, label]) => field({ type: "checkbox", name: `lim_${k}`, value: l[k] ? 1 : 0, label }))}</div>
     </fieldset>`;
   };

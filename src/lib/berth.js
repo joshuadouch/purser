@@ -55,10 +55,15 @@ export const PLAN_LIMITS = [
   ["workers", "PHP workers", "site"],
   ["upload_mb", "Upload size (MB)", "site"],
   ["db_connections", "Database connections", "site"],
+  ["mail_domains", "Mail domains (0 = no mail)", "mail"],
+  ["mailboxes", "Mailboxes", "mail"],
+  ["mail_aliases", "Aliases", "mail"],
+  ["mail_storage_mb", "Mail storage (MB)", "mail"],
 ];
 export const PLAN_FLAGS = [
   ["allow_shell", "Allow PHP exec and shell functions"],
   ["no_sftp", "No SFTP"],
+  ["no_sites", "Mail only: no websites"],
 ];
 
 export function parseLimits(json) {

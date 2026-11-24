@@ -107,6 +107,7 @@ const ctx = { waitUntil: (p) => p.catch((e) => console.error("waitUntil", e)) };
 const calls = [];
 const berthAccounts = new Map();
 const berthPlansPushed = new Map();
+const berthMail = new Map();
 let piCounter = 0;
 globalThis.fetch = async (input, init = {}) => {
   const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
@@ -147,6 +148,15 @@ globalThis.fetch = async (input, init = {}) => {
       const acc = { id: `acc${berthAccounts.size + 1}`, email: b.email, plan_id: b.plan, external_id: b.external_id, suspended: false, users: [{ username: "alice" }], sites: [] };
       berthAccounts.set(acc.id, acc);
       return j({ account: acc, username: "alice", password: "GeneratedPw123", login_url: "https://berth.test/login" }, 201);
+    }
+    const pm = p.match(/^\/accounts\/([^/]+)\/plugins\/(\w+)$/);
+    if (pm && method === "POST") {
+      const ref = decodeURIComponent(pm[1]);
+      const acc = ref.startsWith("ext:") ? [...berthAccounts.values()].find((a) => a.external_id === ref.slice(4)) : berthAccounts.get(ref);
+      if (!acc || pm[2] !== "mailcow") return j({ error: "not found" }, 404);
+      const created = !berthMail.has(acc.id);
+      berthMail.set(acc.id, JSON.parse(body).domain);
+      return j({ domain: JSON.parse(body).domain, created, webmail: "https://webmail.test/" });
     }
     const m = p.match(/^\/accounts\/([^/]+)(\/[\w-]+)?$/);
     if (m) {
@@ -326,6 +336,13 @@ const client = await q("SELECT * FROM clients WHERE id = 1");
 assert.equal(client.stripe_pm, "pm_card_1");
 assert.match(client.stripe_pm_label, /Visa ending 4242/);
 assert.ok(lastMailTo("alice@example.com").raw.includes("hosting is ready"), "welcome email");
+assert.equal(berthMail.size, 0, "no mail domain on a plan without mail");
+// A plan with mail: the order's domain becomes a mail domain in Berth.
+await env.DB.prepare(`UPDATE products SET berth_limits = '{"mail_domains":1,"mailboxes":5}' WHERE id = 1`).run();
+r = await admin.submit("/admin/services/1", "/admin/services/1/act", { do: "provision" });
+assert.equal(berthMail.get("acc1"), "alice-shop.co.uk");
+assert.equal((await env.DB.prepare("SELECT provision_error FROM services WHERE id = 1").first()).provision_error, null);
+await env.DB.prepare(`UPDATE products SET berth_limits = '' WHERE id = 1`).run();
 
 // Client area shows the service and can open Berth.
 r = await alice.get("/services/1");
@@ -495,7 +512,8 @@ r = await admin.submit(`/admin/products/${plusId}`, `/admin/products/${plusId}`,
 see(r, "limits");
 assert.deepEqual(berthPlansPushed.get("Plus"), {
   name: "Plus", max_sites: 5, disk_mb: 30720, dns_zones: 0, cpu_percent: 0, ram_mb: 2048, max_processes: 0,
-  max_domains: 0, memory_mb: 384, workers: 0, upload_mb: 0, db_connections: 0, allow_shell: true, no_sftp: false,
+  max_domains: 0, memory_mb: 384, workers: 0, upload_mb: 0, db_connections: 0, mail_domains: 0, mailboxes: 0, mail_aliases: 0, mail_storage_mb: 0,
+  allow_shell: true, no_sftp: false, no_sites: false,
 });
 r = await admin.get(`/admin/products/${plusId}`);
 assert.match(r.text_, /name="lim_ram_mb" type="number" value="2048"/);
