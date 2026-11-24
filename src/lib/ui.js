@@ -42,6 +42,8 @@ const head = (c, title) => html`<!doctype html>
 <title>${title} · ${c.s.company_name}</title>
 <meta name="theme-color" content="#fff8f2">
 <link rel="icon" href="/favicon.svg?v=${ASSET_V}" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=${ASSET_V}">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${ASSET_V}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
