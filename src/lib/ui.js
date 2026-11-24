@@ -2,7 +2,7 @@
 import { html, raw, esc } from "./html.js";
 import { CYCLES, fmtDate, initials, money, pounds } from "./util.js";
 
-export const ASSET_V = "7";
+export const ASSET_V = "9";
 
 const I = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
@@ -23,6 +23,7 @@ const I = {
   pound: '<path d="M18 7a4 4 0 0 0-7.5-2C9.7 6.4 10 8.5 10 10v4c0 2-1 4-3 5h11M6 12h8"/>',
   alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
+  tag: '<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
   menu: '<path d="M3 6h18M3 12h18M3 18h18"/>',
   print: '<path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
   paperclip: '<path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
@@ -66,7 +67,7 @@ function nav(items, active) {
 }
 
 function shell(c, { title, active, body, groups, home, who, sub, logout, banner, topActions, kicker }) {
-  const brand = html`<a class="brand" href="${home}"><span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span><span>${c.s.company_name}</span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
+  const brand = html`<a class="brand" href="${home}"><span class="brand-stack"><span class="brand-row"><span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span><span>${c.s.company_name}</span></span><span class="logo-tag">Client Area</span></span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
   return new Response(
     String(html`${head(c, title)}
 <body class="app">
@@ -116,7 +117,7 @@ function siteHeader(c, { signedIn }) {
   return html`<a class="skip" href="#main">Skip to content</a>
 <header class="site-head">
   <div class="site-wrap head-in">
-    <a class="site-logo" href="${c.s.site_url}" aria-label="${c.s.company_name} home">${logo(c)}</a>
+    <div class="logo-stack"><a class="site-logo" href="${c.s.site_url}" aria-label="${c.s.company_name} home">${logo(c)}</a><span class="logo-tag">Client Area</span></div>
     <nav class="site-nav" aria-label="Website">${links.map((l) => html`<a href="${l.href}">${l.label}</a>`)}</nav>
     <div class="head-cta">${signedIn
       ? html`<a class="btn btn-sm${c.url.pathname === "/" ? " btn-primary" : ""}" href="/">${icon("user")}<span>Your account</span></a><form method="post" action="/logout" class="inline">${csrf(c)}<button class="icon-btn" title="Sign out" aria-label="Sign out">${icon("logout")}</button></form>`
@@ -242,7 +243,7 @@ export function adminPage(c, { title, active, body, topActions }) {
         items: [
           { id: "invoices", href: "/admin/invoices", icon: "file", label: "Invoices" },
           { id: "transactions", href: "/admin/transactions", icon: "pound", label: "Transactions" },
-          ...(isAdmin ? [{ id: "products", href: "/admin/products", icon: "box", label: "Products" }] : []),
+          ...(isAdmin ? [{ id: "products", href: "/admin/products", icon: "box", label: "Products" }, { id: "promos", href: "/admin/promos", icon: "tag", label: "Discount codes" }] : []),
         ],
       },
       {

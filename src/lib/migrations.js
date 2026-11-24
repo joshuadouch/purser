@@ -247,6 +247,38 @@ export const MIGRATIONS = [
     name: "berth plan limits on products",
     sql: [`ALTER TABLE products ADD COLUMN berth_limits TEXT NOT NULL DEFAULT ''`],
   },
+  {
+    id: 4,
+    name: "discount codes",
+    sql: [
+      `CREATE TABLE promo_codes (
+        id INTEGER PRIMARY KEY,
+        code TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL DEFAULT 'percent',
+        value INTEGER NOT NULL,
+        recurring INTEGER NOT NULL DEFAULT 0,
+        product_ids TEXT NOT NULL DEFAULT '',
+        cycles TEXT NOT NULL DEFAULT '',
+        max_uses INTEGER NOT NULL DEFAULT 0,
+        once_per_client INTEGER NOT NULL DEFAULT 1,
+        expires TEXT,
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE promo_redemptions (
+        id INTEGER PRIMARY KEY,
+        promo_id INTEGER NOT NULL REFERENCES promo_codes(id),
+        client_id INTEGER NOT NULL REFERENCES clients(id),
+        service_id INTEGER,
+        invoice_id INTEGER,
+        amount INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      )`,
+      `CREATE INDEX promo_redemptions_promo ON promo_redemptions (promo_id)`,
+      `ALTER TABLE services ADD COLUMN promo_code TEXT NOT NULL DEFAULT ''`,
+    ],
+  },
 ];
 
 let applied = null;

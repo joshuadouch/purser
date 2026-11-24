@@ -10,7 +10,8 @@ import {
 import { invoicePage } from "./client.js";
 import { stripe } from "../lib/stripe.js";
 import { PLAN_FLAGS, PLAN_LIMITS, berthPlans, berthReady, parseLimits, pushPlan } from "../lib/berth.js";
-import { CYCLES, clean, fmtDateTime, fullName, int, money, nowIso, parseMoney, today } from "../lib/util.js";
+import { describePromo, normCode } from "../lib/promo.js";
+import { CYCLES, clean, fmtDate, fmtDateTime, fullName, int, money, nowIso, parseMoney, today } from "../lib/util.js";
 
 export default function (r) {
   const S = requireStaff;
@@ -204,6 +205,119 @@ export default function (r) {
       ${rows.map((t) => html`<tr><td class="nowrap">${fmtDateTime(t.created_at)}</td><td><a href="/admin/clients/${t.client_id}">${t.company || t.email}</a></td><td>${t.invoice_id ? html`<a href="/admin/invoices/${t.invoice_id}">${t.number}</a>` : ""}</td><td class="hide-sm">${t.gateway}</td><td class="num ${t.amount < 0 ? "neg" : ""}">${money(t.amount)}</td></tr>`)}
       </tbody></table>${pager(c, total, 100)}` : empty("No payments yet.")}</section>`,
     });
+  });
+
+  // ---- discount codes ------------------------------------------------------------
+  r.get("/admin/promos", S, A, async (c) => {
+    const rows = await all(
+      c.env,
+      `SELECT p.*, (SELECT COUNT(*) FROM promo_redemptions r LEFT JOIN services s ON s.id = r.service_id WHERE r.promo_id = p.id AND (s.id IS NULL OR s.status != 'cancelled')) AS used
+       FROM promo_codes p ORDER BY p.active DESC, p.id DESC`,
+    );
+    const t = today();
+    return adminPage(c, {
+      title: "Discount codes", active: "promos",
+      topActions: html`<a class="btn btn-primary btn-sm" href="/admin/promos/new">${icon("plus")}<span class="hide-sm">New code</span></a>`,
+      body: html`<p class="muted">Customers enter a code on the order page. Website links can fill it in with <code>/order/&lt;plan&gt;?code=CODE</code>.</p>
+      <section class="card">${rows.length ? html`<table class="table"><thead><tr><th>Code</th><th>Discount</th><th class="hide-sm">Used</th><th class="hide-sm">Expires</th><th></th></tr></thead><tbody>
+      ${rows.map((p) => html`<tr data-href="/admin/promos/${p.id}"><td><a href="/admin/promos/${p.id}"><b><code>${p.code}</code></b></a>${p.description ? html`<small class="block muted">${p.description}</small>` : ""}</td><td>${describePromo(p)}</td><td class="hide-sm">${p.used}${p.max_uses ? ` of ${p.max_uses}` : ""}</td><td class="hide-sm">${p.expires ? fmtDate(p.expires) : "never"}</td>
+      <td>${!p.active ? badge("closed", "Off") : p.expires && p.expires < t ? badge("closed", "Expired") : p.max_uses && p.used >= p.max_uses ? badge("closed", "Used up") : badge("active", "Live")}</td></tr>`)}
+      </tbody></table>` : empty("No discount codes yet.", html`<a class="btn btn-primary btn-sm" href="/admin/promos/new">Add a code</a>`)}</section>`,
+    });
+  });
+
+  const promoForm = async (c, p) => {
+    const products = await all(c.env, "SELECT id, name FROM products ORDER BY sort, id");
+    const pick = new Set(String(p.product_ids || "").split(",").filter(Boolean));
+    const cyc = new Set(String(p.cycles || "").split(",").filter(Boolean));
+    const redemptions = p.id
+      ? await all(c.env, `SELECT r.*, cl.email, cl.company FROM promo_redemptions r JOIN clients cl ON cl.id = r.client_id WHERE r.promo_id = ? ORDER BY r.id DESC LIMIT 50`, p.id)
+      : [];
+    return html`<section class="card narrow"><form method="post" class="stack">${csrf(c)}
+      <div class="grid2">
+        ${field({ label: "Code", name: "code", value: p.code, required: true, placeholder: "WELCOME10", hint: "Letters, numbers, dashes. Not case sensitive for customers." })}
+        ${field({ label: "Note", name: "description", value: p.description, optional: true, hint: "Only staff see this." })}
+      </div>
+      <div class="grid2">
+        ${field({ label: "Type", name: "kind", type: "select", value: p.kind || "percent", options: [["percent", "Percentage off"], ["fixed", "Fixed amount off (£)"]] })}
+        ${field({ label: "Amount", name: "value", value: p.id ? (p.kind === "fixed" ? (p.value / 100).toFixed(2) : String(p.value)) : "", required: true, placeholder: "10", hint: "A percentage (1 to 100) or an amount in pounds." })}
+      </div>
+      ${field({ type: "checkbox", name: "recurring", value: p.recurring ?? 0, label: "Keep the discount on every renewal", hint: "Off: only the first invoice is discounted." })}
+      <fieldset><legend>Products <small class="muted">none ticked means every product</small></legend><div class="btn-row">
+        ${products.map((x) => html`<label class="check"><input type="checkbox" name="product_${x.id}" value="1"${pick.has(String(x.id)) ? raw(" checked") : ""}> <span>${x.name}</span></label>`)}
+      </div></fieldset>
+      <fieldset><legend>Billing periods <small class="muted">none ticked means all</small></legend><div class="btn-row">
+        ${Object.entries(CYCLES).map(([k, v]) => html`<label class="check"><input type="checkbox" name="cycle_${k}" value="1"${cyc.has(k) ? raw(" checked") : ""}> <span>${v.label}</span></label>`)}
+      </div></fieldset>
+      <div class="grid2">
+        ${field({ label: "Total uses", name: "max_uses", type: "number", min: 0, value: p.max_uses || "", optional: true, hint: "Blank or 0 for no limit." })}
+        ${field({ label: "Last day it works", name: "expires", type: "date", value: p.expires || "", optional: true })}
+      </div>
+      ${field({ type: "checkbox", name: "once_per_client", value: p.once_per_client ?? 1, label: "Each client can use it once" })}
+      ${field({ type: "checkbox", name: "active", value: p.active ?? 1, label: "Code is switched on" })}
+      <div class="btn-row"><button class="btn btn-primary">Save code</button><a class="btn" href="/admin/promos">Cancel</a></div>
+    </form></section>
+    ${redemptions.length ? html`<section class="card narrow"><div class="card-head"><h3>Used by</h3></div><table class="table"><thead><tr><th>When</th><th>Client</th><th>Order</th><th class="num">Discount</th></tr></thead><tbody>
+      ${redemptions.map((x) => html`<tr><td class="nowrap">${fmtDateTime(x.created_at)}</td><td><a href="/admin/clients/${x.client_id}">${x.company || x.email}</a></td><td>${x.service_id ? html`<a href="/admin/services/${x.service_id}">Service #${x.service_id}</a>` : ""}${x.invoice_id ? html` · <a href="/admin/invoices/${x.invoice_id}">invoice</a>` : ""}</td><td class="num">${money(x.amount)}</td></tr>`)}
+    </tbody></table></section>` : ""}`;
+  };
+
+  const promoFields = async (c) => {
+    const f = c.form;
+    const kind = f.get("kind") === "fixed" ? "fixed" : "percent";
+    const value = kind === "fixed" ? parseMoney(f.get("value")) : int(f.get("value"), 0);
+    const products = await all(c.env, "SELECT id FROM products");
+    return {
+      code: normCode(f.get("code")),
+      description: clean(f.get("description"), 200),
+      kind,
+      value: value ?? 0,
+      recurring: f.get("recurring") === "1" ? 1 : 0,
+      product_ids: products.filter((x) => f.get(`product_${x.id}`) === "1").map((x) => x.id).join(","),
+      cycles: Object.keys(CYCLES).filter((k) => f.get(`cycle_${k}`) === "1").join(","),
+      max_uses: Math.max(0, int(f.get("max_uses"), 0)),
+      once_per_client: f.get("once_per_client") === "1" ? 1 : 0,
+      expires: /^\d{4}-\d{2}-\d{2}$/.test(f.get("expires") || "") ? f.get("expires") : null,
+      active: f.get("active") === "1" ? 1 : 0,
+    };
+  };
+  const promoProblem = (o) => {
+    if (!o.code) return "Give it a code.";
+    if (o.kind === "percent" && !(o.value >= 1 && o.value <= 100)) return "A percentage must be between 1 and 100.";
+    if (o.kind === "fixed" && !(o.value > 0)) return "Enter the amount to take off.";
+    return null;
+  };
+
+  r.get("/admin/promos/new", S, A, async (c) => adminPage(c, { title: "New discount code", active: "promos", body: await promoForm(c, {}) }));
+
+  r.post("/admin/promos/new", S, A, async (c) => {
+    const o = await promoFields(c);
+    const problem = promoProblem(o);
+    if (problem) return redirect("/admin/promos/new", problem, "err");
+    if (await one(c.env, "SELECT id FROM promo_codes WHERE code = ?", o.code)) return redirect("/admin/promos/new", "That code already exists.", "err");
+    o.created_at = nowIso();
+    const keys = Object.keys(o);
+    await insert(c.env, `INSERT INTO promo_codes (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`, ...keys.map((k) => o[k]));
+    await log(c.env, c.actor, null, "promo.created", `${o.code}: ${describePromo(o)}`);
+    return redirect("/admin/promos", `Code ${o.code} added.`);
+  });
+
+  r.get("/admin/promos/:id", S, A, async (c) => {
+    const p = await one(c.env, "SELECT * FROM promo_codes WHERE id = ?", Number(c.params.id));
+    if (!p) return notFound(c);
+    return adminPage(c, { title: `Code ${p.code}`, active: "promos", body: await promoForm(c, p) });
+  });
+
+  r.post("/admin/promos/:id", S, A, async (c) => {
+    const p = await one(c.env, "SELECT * FROM promo_codes WHERE id = ?", Number(c.params.id));
+    if (!p) return notFound(c);
+    const o = await promoFields(c);
+    const problem = promoProblem(o);
+    if (problem) return redirect(`/admin/promos/${p.id}`, problem, "err");
+    if (await one(c.env, "SELECT id FROM promo_codes WHERE code = ? AND id != ?", o.code, p.id)) return redirect(`/admin/promos/${p.id}`, "Another code already uses that.", "err");
+    await update(c.env, "promo_codes", p.id, o);
+    await log(c.env, c.actor, null, "promo.updated", `${o.code}: ${describePromo(o)}${o.active ? "" : " (off)"}`);
+    return redirect("/admin/promos", "Saved. Orders already placed keep their discount.");
   });
 
   // ---- products ------------------------------------------------------------------

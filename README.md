@@ -36,6 +36,8 @@ Set it up in Admin → Settings → Berth: the Berth address (must be reachable 
 
 **Plans live in Purser.** Give a hosting product a Berth plan name and fill in its limits (sites, storage, CPU, RAM, PHP memory and so on) on the product form. Saving sends the plan to Berth, creating it if it's new, and Products → **Send plans to Berth** re-sends them all. This needs a Berth with `PUT /api/provision/plans/{name}`.
 
+**Discount codes** are under Billing → Discount codes. A code takes a percentage or a fixed amount off the first invoice, or off every renewal when "Keep the discount on every renewal" is ticked. It can be limited to some products or billing periods, a number of uses, an end date, and once per client. Customers enter it on the order page, and website links can fill it in with `/order/<plan>?code=CODE`. A code that brings the first invoice to £0 sets the service up straight away, with no card payment.
+
 Berth's suspension blocks the customer's panel sign-in; their sites keep running.
 
 ## Stripe

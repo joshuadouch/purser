@@ -2,7 +2,7 @@
 import { html, raw, textBlock } from "../lib/html.js";
 import { all, one, run, update } from "../lib/db.js";
 import { hashPassword, passwordProblem, verifyPassword } from "../lib/auth.js";
-import { notFound, optionalClient, redirect, requireClient } from "../lib/http.js";
+import { json, notFound, optionalClient, redirect, requireClient } from "../lib/http.js";
 import { badge, clientPage, publicPage, csrf, cycleLabel, dateCell, empty, field, icon, invoiceBadge, priceLabel, stat } from "../lib/ui.js";
 import {
   applyCredit, checkoutForCard, checkoutForInvoice, getInvoice, getItems, getService, handleCheckoutSession, log, notifyAdmin,
@@ -12,6 +12,7 @@ import { accountRef, berth, berthReady } from "../lib/berth.js";
 import { stripe } from "../lib/stripe.js";
 import { CYCLES, clean, fmtDate, fullName, money, nowIso, today } from "../lib/util.js";
 import { accountFields, signUp } from "../lib/signup.js";
+import { checkPromo, describePromo, discountOn, normCode } from "../lib/promo.js";
 
 export default function (r) {
   const C = requireClient;
@@ -292,6 +293,10 @@ export default function (r) {
               ${canRegister ? html`<div class="grid2">${accountFields(c)}</div>` : html`<p>New accounts are made by invitation. <a href="/login?next=${next}">Sign in</a> to order.</p>`}
             </section>`
           : ""}
+        <section class="card promo">
+          <div class="promo-row">${field({ label: "Discount code", name: "code", optional: true, value: normCode(c.url.searchParams.get("code")), autocomplete: "off" })}<button type="button" class="btn" data-promo-apply="/order/${p.slug || p.id}/code">Apply</button></div>
+          <p class="small" data-promo-note aria-live="polite"></p>
+        </section>
         ${p.setup_fee ? html`<p class="small muted">A one-off set-up fee of ${money(p.setup_fee)} is added to the first invoice.</p>` : ""}
         ${field({ type: "checkbox", name: "save_card", value: 1, label: "Save my card so renewals are paid automatically", hint: "You can remove it any time from your account." })}
         <button class="btn btn-primary btn-lg btn-block"${guest && !canRegister ? raw(" disabled") : ""}>Continue to secure payment</button>
@@ -303,12 +308,32 @@ export default function (r) {
     });
   });
 
+  // Checks a discount code for the order page, before the order is placed.
+  r.get("/order/:id/code", O, async (c) => {
+    const p = await findProduct(c, c.params.id);
+    if (!p) return json({ ok: false, message: "No such product." }, 404);
+    const cycle = c.url.searchParams.get("cycle");
+    const price = productPrice(p, cycle);
+    if (price === null) return json({ ok: false, message: "Pick how you'd like to pay first." });
+    const res = await checkPromo(c.env, c.url.searchParams.get("code"), { product: p, cycle, clientId: c.client?.id });
+    if (res.error) return json({ ok: false, message: res.error });
+    const first = price + (p.setup_fee || 0);
+    const off = discountOn(res.promo, first);
+    return json({ ok: true, code: res.promo.code, message: `${res.promo.code}: ${describePromo(res.promo)}. You'll pay ${money(first - off)} today instead of ${money(first)}.` });
+  });
+
   r.post("/order/:id", O, async (c) => {
     const p = await findProduct(c, c.params.id);
     if (!p) return notFound(c);
     const back = `/order/${p.slug || p.id}`;
     const cycle = c.form.get("cycle");
     if (productPrice(p, cycle) === null) return redirect(back, "Pick how you'd like to pay.", "err");
+    let promo = null;
+    if (normCode(c.form.get("code"))) {
+      const res = await checkPromo(c.env, c.form.get("code"), { product: p, cycle, clientId: c.client?.id });
+      if (res.error) return redirect(`${back}?cycle=${cycle}`, res.error, "err");
+      promo = res.promo;
+    }
     let label = clean(c.form.get("label"), 120).toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
     if (p.needs_domain && !/^([a-z0-9-]+\.)+[a-z]{2,}$/.test(label)) return redirect(`${back}?cycle=${cycle}`, "Enter a domain like example.co.uk.", "err");
     if (!p.needs_domain) label = clean(c.form.get("label"), 120);
@@ -326,7 +351,7 @@ export default function (r) {
       const pendingOrders = await one(c.env, "SELECT COUNT(*) AS n FROM services WHERE client_id = ? AND status = 'pending'", client.id);
       if (pendingOrders.n >= 5) return redirect("/invoices", "You have several unpaid orders. Pay or cancel those first.", "err");
     }
-    const { invoice } = await placeOrder(c.env, c.s, client, p, { cycle, label, actor, ctx: c.ctx });
+    const { invoice } = await placeOrder(c.env, c.s, client, p, { cycle, label, actor, ctx: c.ctx, promo });
     if (invoice.status === "paid") return redirect("/services", "Thanks! Your order is being set up.", "ok", cookies);
     if (c.s.stripe_secret_key) {
       try {
