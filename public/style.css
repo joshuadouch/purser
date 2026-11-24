@@ -394,3 +394,10 @@ details.danger-zone[open] { border: 1px solid var(--red-bg); border-radius: 10px
 .order-form .cycle input { margin-top: 4px; }
 .order-form .cycle span { gap: 2px; }
 .order-form .cycle .price small, .order-form .cycle small { display: inline; }
+
+/* Discount code on the order page */
+.ok-text { color: var(--green); }
+.promo-row { display: flex; gap: 10px; align-items: flex-end; }
+.promo-row .field { flex: 1; }
+.promo [data-promo-note]:empty { display: none; }
+.promo [data-promo-note] { margin: 10px 0 0; }

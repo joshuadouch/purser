@@ -553,6 +553,51 @@ assert.match(see(r, "existing email"), /^\/login\?next=/);
 assert.match((await browser().get("/login")).text_, /class="site-foot"/);
 assert.doesNotMatch((await browser().get("/admin/login")).text_, /class="site-foot"/);
 
+// ---- discount codes ------------------------------------------------------------------------
+ok200(await admin.get("/admin/promos"), "promos list");
+r = await admin.submit("/admin/promos/new", "/admin/promos/new", { code: "test 100", kind: "percent", value: "100", once_per_client: "1", active: "1" });
+assert.equal(see(r, "promo 100"), "/admin/promos");
+r = await admin.submit("/admin/promos/new", "/admin/promos/new", { code: "half", kind: "percent", value: "50", recurring: "1", [`product_${plusId}`]: "1", cycle_annually: "1", active: "1" });
+assert.equal(see(r, "promo half"), "/admin/promos");
+r = await admin.submit("/admin/promos/new", "/admin/promos/new", { code: "bad", kind: "percent", value: "150", active: "1" });
+assert.match(see(r, "promo bad"), /promos\/new/);
+r = await admin.submit("/admin/promos/new", "/admin/promos/new", { code: "TEST100", kind: "percent", value: "5", active: "1" });
+assert.match(see(r, "promo dupe"), /promos\/new/);
+// The order page checks a code before ordering.
+const codeCheck = async (b, q) => JSON.parse((await b.get(`/order/plus/code?${q}`)).text_);
+assert.equal((await codeCheck(guest, "code=nope&cycle=monthly")).ok, false);
+let cc = await codeCheck(guest, "code=test100&cycle=monthly");
+assert.equal(cc.ok, true);
+assert.match(cc.message, /£0\.00 today/);
+assert.match((await codeCheck(guest, "code=half&cycle=monthly")).message, /annually/);
+assert.match((await codeCheck(guest, "code=half&cycle=annually")).message, /£14\.95 today/);
+assert.match((await browser().get("/order/plus?code=test100")).text_, /name="code"[^>]*value="TEST100"/);
+// 100% off: no payment, the service is set up straight away.
+const freeForm = { ...guestForm, email: "erin@example.com", label: "erin.dev", cycle: "monthly", code: "Test100", terms: "1" };
+const erin = browser();
+r = await erin.post("/order/plus", freeForm);
+assert.equal(see(r, "free order"), "/services");
+await new Promise((res) => setTimeout(res, 20));
+const erinSvc = await env.DB.prepare("SELECT s.* FROM services s JOIN clients c ON c.id = s.client_id WHERE c.email = 'erin@example.com'").first();
+assert.equal(erinSvc.status, "active");
+assert.equal(erinSvc.promo_code, "TEST100");
+assert.equal(erinSvc.price, 299, "first-invoice code keeps the renewal price");
+const erinInv = await env.DB.prepare("SELECT i.* FROM invoices i JOIN invoice_items it ON it.invoice_id = i.id WHERE it.service_id = ?").bind(erinSvc.id).first();
+assert.equal(erinInv.total, 0);
+assert.equal(erinInv.status, "paid");
+// Once per client.
+r = await erin.submit("/order/plus", "/order/plus", { cycle: "monthly", label: "erin2.dev", code: "TEST100" });
+assert.match(see(r, "reuse"), /\/order\/plus/);
+assert.match((await codeCheck(erin, "code=test100&cycle=monthly")).message, /already used/);
+// A recurring code lowers the renewal price too.
+r = await erin.submit("/order/plus", "/order/plus", { cycle: "annually", label: "erin3.dev", code: "half" });
+assert.equal(see(r, "half order"), "https://checkout.stripe.test/cs_test_1");
+const halfSvc = await env.DB.prepare("SELECT * FROM services WHERE label = 'erin3.dev'").first();
+assert.equal(halfSvc.price, 1495);
+r = await admin.get("/admin/promos");
+assert.match(r.text_, /TEST100/);
+assert.match(r.text_, /100% off your first invoice/);
+
 // Migrations are idempotent.
 resetMigrationState();
 ok200(await alice.get("/"), "after re-migrate");

@@ -6,6 +6,7 @@ import { nextInvoiceNumber } from "./settings.js";
 import { CYCLES, addDays, cycleEnd, fmtDate, fullName, money, nowIso, today } from "./util.js";
 import { BerthError, accountRef, berth, berthReady, externalId, parseLimits } from "./berth.js";
 import { cardLabel, stripe } from "./stripe.js";
+import { discountOn } from "./promo.js";
 
 export const SYSTEM = { kind: "system", id: null, name: "System" };
 export const baseUrl = (env) => (env.PUBLIC_URL || "https://clientarea.ratlan.net").replace(/\/+$/, "");
@@ -500,23 +501,34 @@ export function productPrice(p, cycle) {
 }
 export const productCycles = (p) => Object.keys(CYCLES).filter((c) => productPrice(p, c) !== null);
 
-export async function placeOrder(env, s, client, product, { cycle, label, actor, ctx, invoice = true }) {
+// promo: a row from promo_codes, already checked with checkPromo.
+export async function placeOrder(env, s, client, product, { cycle, label, actor, ctx, invoice = true, promo = null }) {
   const price = productPrice(product, cycle);
   if (price === null) throw new Error("That billing cycle isn't offered for this product");
+  // A recurring code lowers the price the service renews at, too.
+  const renewPrice = promo?.recurring ? price - discountOn(promo, price) : price;
   const sid = await insert(
-    env, "INSERT INTO services (client_id, product_id, label, cycle, price, status, created_at) VALUES (?,?,?,?,?,?,?)",
-    client.id, product.id, label || "", cycle, price, "pending", nowIso(),
+    env, "INSERT INTO services (client_id, product_id, label, cycle, price, status, promo_code, created_at) VALUES (?,?,?,?,?,?,?,?)",
+    client.id, product.id, label || "", cycle, renewPrice, "pending", promo?.code || "", nowIso(),
   );
-  await log(env, actor, client.id, "order.placed", `${product.name}${label ? ` (${label})` : ""}, ${CYCLES[cycle].label.toLowerCase()} at ${money(price)}`);
+  await log(env, actor, client.id, "order.placed", `${product.name}${label ? ` (${label})` : ""}, ${CYCLES[cycle].label.toLowerCase()} at ${money(renewPrice)}${promo ? ` with code ${promo.code}` : ""}`);
   if (!invoice) return { serviceId: sid };
   const start = today();
   const end = cycleEnd(start, cycle);
   const desc = `${product.name}${label ? ` - ${label}` : ""}${end ? ` (${fmtDate(start)} to ${fmtDate(addDays(end, -1))})` : ""}`;
   const items = [{ service_id: sid, kind: "service", description: desc, amount: price, period_start: start, period_end: end }];
   if (product.setup_fee) items.push({ service_id: sid, kind: "setup", description: `${product.name} set-up fee`, amount: product.setup_fee });
+  const off = promo ? discountOn(promo, items.reduce((a, i) => a + i.amount, 0)) : 0;
+  if (off > 0) items.push({ service_id: sid, kind: "discount", description: `Discount code ${promo.code}`, amount: -off });
   const inv = await createInvoice(env, s, client.id, items, { due: start, actor, ctx });
+  if (promo) {
+    await insert(
+      env, "INSERT INTO promo_redemptions (promo_id, client_id, service_id, invoice_id, amount, created_at) VALUES (?,?,?,?,?,?)",
+      promo.id, client.id, sid, inv.id, off, nowIso(),
+    );
+  }
   await notifyAdmin(env, s, `New order from ${client.email}`, [
-    `${fullName(client) || client.email} ordered ${product.name}${label ? ` (${label})` : ""}, ${CYCLES[cycle].label.toLowerCase()} at ${money(price)}.`,
+    `${fullName(client) || client.email} ordered ${product.name}${label ? ` (${label})` : ""}, ${CYCLES[cycle].label.toLowerCase()} at ${money(renewPrice)}${promo ? `, with discount code ${promo.code} (${money(off)} off the first invoice)` : ""}.`,
     { button: { label: "Open client", url: `${baseUrl(env)}/admin/clients/${client.id}` } },
   ]);
   return { serviceId: sid, invoice: inv };

@@ -44,3 +44,37 @@ document.addEventListener("change", (e) => {
   const v = e.target.value;
   document.querySelectorAll("[data-cycle-line]").forEach((el) => (el.hidden = el.dataset.cycleLine !== v));
 });
+
+// Order page: check a discount code before ordering.
+(() => {
+  const btn = document.querySelector("[data-promo-apply]");
+  if (!btn) return;
+  const form = btn.closest("form");
+  const input = form.querySelector('[name="code"]');
+  const note = form.querySelector("[data-promo-note]");
+  const check = async () => {
+    const code = input.value.trim();
+    note.className = "small";
+    if (!code) return (note.textContent = "");
+    const cycle = form.querySelector('[name="cycle"]:checked')?.value || "";
+    try {
+      const r = await fetch(`${btn.dataset.promoApply}?code=${encodeURIComponent(code)}&cycle=${encodeURIComponent(cycle)}`, { credentials: "same-origin" });
+      const d = await r.json();
+      note.textContent = d.message;
+      note.className = `small ${d.ok ? "ok-text" : "err"}`;
+    } catch {
+      note.textContent = "";
+    }
+  };
+  btn.addEventListener("click", check);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      check();
+    }
+  });
+  form.addEventListener("change", (e) => {
+    if (e.target.name === "cycle" && input.value.trim()) check();
+  });
+  if (input.value.trim()) check();
+})();
