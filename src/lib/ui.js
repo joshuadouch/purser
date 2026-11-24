@@ -2,7 +2,7 @@
 import { html, raw, esc } from "./html.js";
 import { CYCLES, fmtDate, initials, money, pounds } from "./util.js";
 
-export const ASSET_V = "6";
+export const ASSET_V = "7";
 
 const I = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
