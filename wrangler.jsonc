@@ -1,0 +1,30 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "purser",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Static files (CSS, JS, favicon) are served straight from public/; everything else runs the Worker.
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  // Test address: https://purser.ratlan.workers.dev
+  "workers_dev": true,
+  "preview_urls": true,
+  "routes": [{ "pattern": "clientarea.ratlan.net", "custom_domain": true }],
+  "d1_databases": [{ "binding": "DB", "database_name": "purser", "database_id": "7adfe22c-8b56-4602-b8da-b0ddc8edcffb" }],
+  // Ticket attachments.
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "purser-attachments" }],
+  // Cloudflare Email Sending from mail-service.ratlan.net. No destination_address,
+  // because invoices and ticket replies go to every client.
+  "send_email": [{ "name": "MAILER" }],
+  // The daily billing run: renewal invoices, card charges, reminders, suspensions (07:00 UTC).
+  "triggers": { "crons": ["0 7 * * *"] },
+  "vars": {
+    "PUBLIC_URL": "https://clientarea.ratlan.net",
+    "FROM_EMAIL": "no-reply@mail-service.ratlan.net"
+    // ADMIN_EMAIL (the owner's address, for first sign-in and alerts) is set as a secret.
+    // Secrets (Worker > Settings > Variables and Secrets), all optional because
+    // they can also be entered in Admin > Settings:
+    // STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, BERTH_TOKEN, TURNSTILE_SECRET
+  },
+  "observability": { "enabled": true }
+}
