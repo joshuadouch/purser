@@ -23,7 +23,7 @@ export const getClient = (env, id) => one(env, "SELECT * FROM clients WHERE id =
 export const getInvoice = (env, id) => one(env, "SELECT * FROM invoices WHERE id = ?", id);
 export const getItems = (env, id) => all(env, "SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id", id);
 export const getService = (env, id) =>
-  one(env, "SELECT s.*, p.name AS product_name, p.type AS product_type, p.berth_plan FROM services s JOIN products p ON p.id = s.product_id WHERE s.id = ?", id);
+  one(env, "SELECT s.*, p.name AS product_name, p.type AS product_type, p.berth_plan, p.berth_limits FROM services s JOIN products p ON p.id = s.product_id WHERE s.id = ?", id);
 
 export function billTo(client) {
   return [
@@ -236,6 +236,58 @@ async function activateService(env, s, svc, item, ctx) {
 
 // ---- Berth --------------------------------------------------------------------
 
+// A mail-only product (Business Email) makes no websites.
+export const isMailOnly = (svc) => !!parseLimits(svc.berth_limits).no_sites;
+
+// The client's Berth account that a new service should join, if any: a mail
+// service joins their hosting account, and hosting joins a mail-only account
+// (which then moves onto the hosting plan). Two hosting services stay apart.
+async function sharedAccount(env, svc) {
+  const others = await all(
+    env,
+    `SELECT s.*, p.name AS product_name, p.type AS product_type, p.berth_plan, p.berth_limits FROM services s JOIN products p ON p.id = s.product_id
+     WHERE s.client_id = ? AND s.id != ? AND s.berth_account IS NOT NULL AND s.berth_account != '' AND s.berth_addon = 0
+       AND s.status IN ('active', 'suspended') AND p.type = 'hosting' ORDER BY s.id`,
+    svc.client_id, svc.id,
+  );
+  if (isMailOnly(svc)) return others.find((o) => !isMailOnly(o)) || others[0] || null;
+  return others.find((o) => isMailOnly(o)) || null;
+}
+
+// joinAccount sets a service up inside the client's existing Berth account.
+async function joinAccount(env, s, svc, base, actor) {
+  const client = await getClient(env, svc.client_id);
+  const ref = encodeURIComponent(base.berth_account);
+  if (isMailOnly(svc)) {
+    // Mail on top of hosting: the mail plan is an add-on.
+    if (svc.berth_plan) await berth(s, "POST", `/accounts/${ref}/addons`, { plan: svc.berth_plan });
+    await update(env, "services", svc.id, { berth_account: base.berth_account, berth_username: base.berth_username, berth_addon: 1, provision_error: null });
+  } else {
+    // Hosting for a mail-only client: their account takes the hosting plan,
+    // and the mail plan stays on as an add-on.
+    await berth(s, "PATCH", `/accounts/${ref}`, { plan: svc.berth_plan || "" });
+    if (base.berth_plan) await berth(s, "POST", `/accounts/${ref}/addons`, { plan: base.berth_plan });
+    await update(env, "services", base.id, { berth_addon: 1 });
+    await update(env, "services", svc.id, { berth_account: base.berth_account, berth_username: base.berth_username, berth_addon: 0, provision_error: null });
+  }
+  await log(env, actor, svc.client_id, "service.provisioned", `Joined Berth account ${base.berth_account} (with service #${base.id})`);
+  const mail = await provisionMail(env, s, { ...svc, berth_account: base.berth_account }, actor);
+  await sendEmail(env, s, {
+    to: client.email,
+    clientId: client.id,
+    subject: `${svc.product_name} is ready${svc.label ? `: ${svc.label}` : ""}`,
+    lines: [
+      `Hi ${client.first_name || "there"},`,
+      `Your ${svc.product_name} is set up in the control panel account you already have${base.berth_username ? ` (username ${base.berth_username})` : ""}, so there's nothing new to sign in to.`,
+      ...(mail?.domain
+        ? [`Email for ${mail.domain} is set up. Add your mailboxes on the Mail page of the control panel, then read your mail at ${mail.webmail || "webmail"} or in any mail app.`]
+        : isMailOnly(svc) ? [] : ["You can now create websites on the Sites page."]),
+      { button: { label: "Open your client area", url: `${baseUrl(env)}/services/${svc.id}` } },
+    ],
+  });
+  return true;
+}
+
 export async function provisionService(env, s, svc, actor) {
   const client = await getClient(env, svc.client_id);
   if (!berthReady(s)) {
@@ -247,6 +299,8 @@ export async function provisionService(env, s, svc, actor) {
     return false;
   }
   try {
+    const base = await sharedAccount(env, svc);
+    if (base) return await joinAccount(env, s, svc, base, actor);
     let created;
     try {
       created = await berth(s, "POST", "/accounts", {
@@ -330,14 +384,29 @@ export async function provisionMail(env, s, svc, actor) {
   }
 }
 
+// The mail domain of a mail service that shares a hosting account.
+const addonDomain = (svc) => String(svc.label || "").trim().toLowerCase();
+
+// mailAction pauses, resumes or removes just the mail of an add-on service.
+async function mailAction(s, svc, action) {
+  const domain = addonDomain(svc);
+  if (domain) await berth(s, "POST", `/accounts/${accountRef(svc)}/plugins/mailcow`, { domain, action });
+}
+
 export async function suspendService(env, s, svc, reason, actor) {
-  if (svc.berth_account && berthReady(s)) await berth(s, "POST", `/accounts/${accountRef(svc)}/suspend`, { reason: `Purser: ${reason}` });
+  if (svc.berth_account && berthReady(s)) {
+    if (svc.berth_addon) await mailAction(s, svc, "suspend");
+    else await berth(s, "POST", `/accounts/${accountRef(svc)}/suspend`, { reason: `Purser: ${reason}` });
+  }
   await update(env, "services", svc.id, { status: "suspended", suspend_reason: reason });
   await log(env, actor, svc.client_id, "service.suspended", `${svc.product_name}${svc.label ? ` (${svc.label})` : ""}: ${reason}`);
 }
 
 export async function unsuspendService(env, s, svc, actor) {
-  if (svc.berth_account && berthReady(s)) await berth(s, "POST", `/accounts/${accountRef(svc)}/unsuspend`);
+  if (svc.berth_account && berthReady(s)) {
+    if (svc.berth_addon) await mailAction(s, svc, "unsuspend");
+    else await berth(s, "POST", `/accounts/${accountRef(svc)}/unsuspend`);
+  }
   await update(env, "services", svc.id, { status: "active", suspend_reason: "" });
   await log(env, actor, svc.client_id, "service.unsuspended", `${svc.product_name}${svc.label ? ` (${svc.label})` : ""}`);
 }
@@ -345,10 +414,38 @@ export async function unsuspendService(env, s, svc, actor) {
 export async function terminateService(env, s, svc, actor, { deleteSites = false } = {}) {
   let note = "";
   if (svc.berth_account && berthReady(s)) {
-    const r = await berth(s, "DELETE", `/accounts/${accountRef(svc)}${deleteSites ? "?delete_sites=1" : ""}`);
-    note = r?.status === "terminating" ? " (Berth is deleting the sites after a final backup)" : "";
+    const ref = accountRef(svc);
+    // Other live services in the same Berth account.
+    const sharing = await all(
+      env,
+      `SELECT s.*, p.berth_plan, p.berth_limits FROM services s JOIN products p ON p.id = s.product_id
+       WHERE s.berth_account = ? AND s.id != ? AND s.status IN ('pending', 'active', 'suspended') ORDER BY s.id`,
+      svc.berth_account, svc.id,
+    );
+    if (svc.berth_addon) {
+      // Cancelling the mail only: remove its domain and add-on, keep the hosting.
+      await mailAction(s, svc, "remove");
+      if (svc.berth_plan) await berth(s, "DELETE", `/accounts/${ref}/addons/${encodeURIComponent(svc.berth_plan)}`);
+      note = " (its mail was removed; the hosting account stays)";
+    } else if (sharing.length) {
+      // The hosting goes but the mail stays: the account moves to the mail plan.
+      const keep = sharing[0];
+      await berth(s, "PATCH", `/accounts/${ref}`, { plan: keep.berth_plan || "" });
+      if (keep.berth_plan) await berth(s, "DELETE", `/accounts/${ref}/addons/${encodeURIComponent(keep.berth_plan)}`);
+      await update(env, "services", keep.id, { berth_addon: 0 });
+      note = ` (the Berth account stays for service #${keep.id}; remove its sites in Berth)`;
+      const client = await getClient(env, svc.client_id);
+      await notifyAdmin(env, s, "Hosting cancelled, mail kept", [
+        `Service #${svc.id} (${svc.product_name}) for ${client.email} was terminated, but service #${keep.id} shares its Berth account, so the account was kept and moved to that service's plan.`,
+        "Its websites are still there. Back them up for the client if needed, then delete them in Berth.",
+        { button: { label: "Open service", url: `${baseUrl(env)}/admin/services/${keep.id}` } },
+      ]);
+    } else {
+      const r = await berth(s, "DELETE", `/accounts/${ref}${deleteSites ? "?delete_sites=1" : ""}`);
+      note = r?.status === "terminating" ? " (Berth is deleting the sites after a final backup)" : "";
+    }
   }
-  await update(env, "services", svc.id, { status: "terminated", next_due: null });
+  await update(env, "services", svc.id, { status: "terminated", next_due: null, berth_addon: 0 });
   await log(env, actor, svc.client_id, "service.terminated", `${svc.product_name}${svc.label ? ` (${svc.label})` : ""}${note}`);
   return note;
 }

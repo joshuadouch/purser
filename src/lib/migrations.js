@@ -279,6 +279,11 @@ export const MIGRATIONS = [
       `ALTER TABLE services ADD COLUMN promo_code TEXT NOT NULL DEFAULT ''`,
     ],
   },
+  {
+    id: 5,
+    name: "mail services that share a hosting account",
+    sql: [`ALTER TABLE services ADD COLUMN berth_addon INTEGER NOT NULL DEFAULT 0`],
+  },
 ];
 
 let applied = null;
