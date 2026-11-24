@@ -2,7 +2,7 @@
 import { html, raw, esc } from "./html.js";
 import { CYCLES, fmtDate, initials, money, pounds } from "./util.js";
 
-export const ASSET_V = "5";
+export const ASSET_V = "6";
 
 const I = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
@@ -41,7 +41,7 @@ const head = (c, title) => html`<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title} · ${c.s.company_name}</title>
 <meta name="theme-color" content="#fff8f2">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.svg?v=${ASSET_V}" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
@@ -64,7 +64,7 @@ function nav(items, active) {
 }
 
 function shell(c, { title, active, body, groups, home, who, sub, logout, banner, topActions, kicker }) {
-  const brand = html`<a class="brand" href="${home}"><span class="brand-mark"><img src="/favicon.svg" alt=""></span><span>${c.s.company_name}</span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
+  const brand = html`<a class="brand" href="${home}"><span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span><span>${c.s.company_name}</span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
   return new Response(
     String(html`${head(c, title)}
 <body class="app">
@@ -105,8 +105,8 @@ const linkLines = (s, v) =>
 
 function logo(c) {
   return c.s.logo_url
-    ? html`<img src="${c.s.logo_url}" alt="${c.s.company_name}" height="38">`
-    : html`<span class="brand-mark"><img src="/favicon.svg" alt=""></span><b>${c.s.company_name}</b>`;
+    ? html`<img src="${c.s.logo_url.startsWith("/") ? `${c.s.logo_url}?v=${ASSET_V}` : c.s.logo_url}" alt="${c.s.company_name}" height="38">`
+    : html`<span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span><b>${c.s.company_name}</b>`;
 }
 
 function siteHeader(c, { signedIn }) {
@@ -273,7 +273,7 @@ export function authPage(c, { title, body, wide }) {
     String(html`${head(c, title)}
 <body class="auth">
 <div class="auth-wrap${wide ? " wide" : ""}">
-  <div class="auth-brand"><span class="brand-mark"><img src="/favicon.svg" alt=""></span>${c.s.company_name}</div>
+  <div class="auth-brand"><span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span>${c.s.company_name}</div>
   <div class="auth-card">
     <h1>${title}</h1>
     ${flashBox(c)}
