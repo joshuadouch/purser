@@ -323,6 +323,32 @@ export const MIGRATIONS = [
       `UPDATE brands SET host = 'clientarea.purehost.co.uk', panel_url = 'https://controlpanel.purehost.co.uk' WHERE slug = 'purehost'`,
     ],
   },
+  {
+    id: 8,
+    name: "first month free",
+    sql: [
+      `CREATE TABLE free_months (
+        id INTEGER PRIMARY KEY,
+        client_id INTEGER NOT NULL REFERENCES clients(id),
+        service_id INTEGER,
+        invoice_id INTEGER,
+        cycle TEXT NOT NULL DEFAULT 'monthly',
+        email_key TEXT NOT NULL DEFAULT '',
+        domain TEXT NOT NULL DEFAULT '',
+        card_fingerprint TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        void_reason TEXT,
+        created_at TEXT NOT NULL,
+        used_at TEXT
+      )`,
+      `CREATE INDEX free_months_invoice ON free_months (invoice_id)`,
+      `CREATE INDEX free_months_email ON free_months (email_key, status)`,
+      `CREATE INDEX free_months_domain ON free_months (domain, status)`,
+      `CREATE INDEX free_months_card ON free_months (card_fingerprint, status)`,
+      `CREATE INDEX free_months_client ON free_months (client_id, status)`,
+      `ALTER TABLE invoices ADD COLUMN free_month INTEGER NOT NULL DEFAULT 0`,
+    ],
+  },
 ];
 
 let applied = null;

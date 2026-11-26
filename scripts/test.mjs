@@ -112,6 +112,7 @@ const berthPlansPushed = new Map();
 const berthMail = new Map();
 const mailActions = [];
 let piCounter = 0;
+const fakeCards = {};
 globalThis.fetch = async (input, init = {}) => {
   const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
   const method = init.method || "GET";
@@ -124,7 +125,10 @@ globalThis.fetch = async (input, init = {}) => {
     if (p.startsWith("/v1/customers/")) return j({ id: "cus_test1" });
     if (p === "/v1/checkout/sessions" && method === "POST") return j({ id: "cs_test_1", url: "https://checkout.stripe.test/cs_test_1" });
     if (p.startsWith("/v1/payment_intents/") && method === "GET") return j({ id: p.split("/").pop(), payment_method: "pm_card_1" });
-    if (p.startsWith("/v1/payment_methods/")) return j({ id: "pm_card_1", type: "card", card: { brand: "visa", last4: "4242", exp_month: 4, exp_year: 2030 } });
+    if (p.startsWith("/v1/payment_methods/")) {
+      const id = p.split("/").pop();
+      return j({ id: fakeCards[id] ? id : "pm_card_1", type: "card", card: { brand: "visa", last4: "4242", exp_month: 4, exp_year: 2030, fingerprint: "fp_default", funding: "credit", ...(fakeCards[id] || {}) } });
+    }
     if (p === "/v1/payment_intents" && method === "POST") {
       const params = new URLSearchParams(body);
       return j({ id: `pi_auto_${++piCounter}`, status: "succeeded", amount: Number(params.get("amount")), amount_received: Number(params.get("amount")) });
@@ -732,6 +736,132 @@ async function sendEmailForTest() {
   assert.ok(raw.includes("https://controlpanel.purehost.co.uk/login"), "panel link on the brand's host");
   assert.equal(rehost("https://berth.test/sso/abc?x=1", "https://cp.example"), "https://cp.example/sso/abc?x=1");
 }
+
+// ---- first month free ------------------------------------------------------------------------
+r = await admin.submit("/admin/settings?tab=billing", "/admin/settings", { tab: "billing", auto_apply_credit: "1", free_month: "1", free_month_annual: "1" });
+see(r, "free month on");
+assert.match((await admin.get("/admin/settings?tab=billing")).text_, /name="free_month" value="1" checked|name="free_month"[^>]*checked/);
+await env.DB.prepare("DELETE FROM login_attempts").run();
+const lastCheckout = () => new URLSearchParams(calls.filter((x) => x.path === "/v1/checkout/sessions" && x.method === "POST").pop().body);
+const svcOf = (email) => q("SELECT s.* FROM services s JOIN clients c ON c.id = s.client_id WHERE c.email = ? ORDER BY s.id DESC", email);
+const invOf = (sid) => q("SELECT i.* FROM invoices i JOIN invoice_items it ON it.invoice_id = i.id WHERE it.service_id = ? ORDER BY i.id DESC", sid);
+const setupDone = (clientId, invoiceId, pm) =>
+  webhook({ type: "checkout.session.completed", data: { object: {
+    id: `cs_free_${invoiceId}`, object: "checkout.session", mode: "setup", status: "complete", setup_intent: { id: `seti_${invoiceId}`, payment_method: pm },
+    metadata: { purser_client: String(clientId), purser_invoice: String(invoiceId), purpose: "free_month" },
+  } } });
+const freeForm2 = { cycle: "monthly", label: "gina.shop", first_name: "Gina", last_name: "G", email: "Gina.Green+web@gmail.com", address1: "x", city: "y", postcode: "z", password: "gina-password-1", terms: "1" };
+const gina = browser();
+r = await gina.get("/order/plus");
+assert.match(r.text_, /First month free/);
+assert.match(r.text_, /13 months for the price of 12/);
+// Existing customers don't see it.
+assert.doesNotMatch((await alice.get("/order/plus")).text_, /First month free/);
+// Monthly: nothing to pay, card saved through Stripe Checkout in setup mode.
+r = await gina.post("/order/plus", freeForm2);
+assert.equal(see(r, "free month order"), "https://checkout.stripe.test/cs_test_1");
+let co = lastCheckout();
+assert.equal(co.get("mode"), "setup");
+assert.equal(co.get("metadata[purpose]"), "free_month");
+assert.match(co.get("custom_text[submit][message]"), /Nothing is charged today.*£2\.99/);
+let gs = await svcOf("gina.green+web@gmail.com");
+assert.equal(gs.status, "pending", "nothing is set up before the card is saved");
+let gi = await invOf(gs.id);
+assert.equal(gi.total, 0);
+assert.equal(gi.status, "unpaid");
+assert.equal(gi.free_month, 1);
+r = await gina.get(`/invoices/${gi.id}`);
+assert.match(r.text_, /Your first month is free/);
+r = await gina.submit(`/invoices/${gi.id}`, `/invoices/${gi.id}/pay`);
+assert.equal(see(r, "free month pay"), "https://checkout.stripe.test/cs_test_1");
+assert.equal(lastCheckout().get("mode"), "setup");
+// No reminders for a £0 invoice waiting on a card.
+const mailsBefore = mails.length;
+await runDaily(env, await loadSettings(env), ctx, addDays(today, 2));
+assert.ok(!mails.slice(mailsBefore).some((m) => m.raw?.includes(gi.number)), "no reminder for the free-month invoice");
+// Card saved: the service starts, renewing at full price a month on.
+fakeCards.pm_free_a = { fingerprint: "fp_A", last4: "1111" };
+assert.equal((await setupDone(gs.client_id, gi.id, "pm_free_a")).status, 200);
+assert.equal((await setupDone(gs.client_id, gi.id, "pm_free_a")).status, 200); // Stripe retries
+await new Promise((res) => setTimeout(res, 20));
+gs = await q("SELECT * FROM services WHERE id = ?", gs.id);
+assert.equal(gs.status, "active");
+assert.equal(gs.price, 299);
+assert.equal(gs.next_due, addMonths(today, 1));
+assert.ok(gs.berth_account, "provisioned");
+gi = await q("SELECT * FROM invoices WHERE id = ?", gi.id);
+assert.equal(gi.status, "paid");
+let gc = await q("SELECT * FROM clients WHERE id = ?", gs.client_id);
+assert.equal(gc.stripe_pm, "pm_free_a");
+assert.equal(gc.auto_charge, 1);
+assert.equal((await q("SELECT COUNT(*) AS n FROM free_months WHERE status = 'used' AND card_fingerprint = 'fp_A'")).n, 1);
+assert.equal(mails.filter((m) => m.raw?.includes("free month of Plus has started")).length, 1, "one free-month email");
+assert.equal((await q("SELECT COUNT(*) AS n FROM transactions WHERE invoice_id = ?", gi.id)).n, 0, "nothing charged");
+// The renewal is charged to the saved card at the normal price.
+report = await runDaily(env, await loadSettings(env), ctx, gs.next_due);
+const ginaRenewal = await q("SELECT * FROM invoices WHERE client_id = ? ORDER BY id DESC", gs.client_id);
+assert.equal(ginaRenewal.total, 299);
+assert.equal(ginaRenewal.status, "paid", JSON.stringify(report));
+
+// Same person, another spelling of the email: normal price.
+await env.DB.prepare("DELETE FROM login_attempts").run();
+r = await browser().post("/order/plus", { ...freeForm2, email: "ginagreen@googlemail.com", label: "gina-two.shop" });
+assert.equal(see(r, "email key"), "https://checkout.stripe.test/cs_test_1");
+assert.equal(lastCheckout().get("mode"), "payment");
+assert.equal((await invOf((await svcOf("ginagreen@googlemail.com")).id)).total, 299);
+// A domain that's been hosted here: normal price.
+r = await browser().post("/order/plus", { ...freeForm2, email: "someone@example.org", label: "gina.shop" });
+see(r, "domain reuse");
+assert.equal(lastCheckout().get("mode"), "payment");
+// New details but the same card: the free month is taken off at the card step.
+await env.DB.prepare("DELETE FROM login_attempts").run();
+const hal = browser();
+r = await hal.post("/order/plus", { ...freeForm2, email: "hal@example.net", label: "hal.shop" });
+assert.equal(lastCheckout().get("mode"), "setup");
+let hs = await svcOf("hal@example.net");
+let hi = await invOf(hs.id);
+fakeCards.pm_free_b = { fingerprint: "fp_A" };
+await setupDone(hs.client_id, hi.id, "pm_free_b");
+hi = await q("SELECT * FROM invoices WHERE id = ?", hi.id);
+assert.equal(hi.free_month, 0);
+assert.equal(hi.total, 299);
+assert.equal(hi.status, "unpaid");
+assert.equal((await q("SELECT status FROM services WHERE id = ?", hs.id)).status, "pending");
+assert.equal((await q("SELECT void_reason FROM free_months WHERE invoice_id = ?", hi.id)).void_reason, "used");
+r = await hal.get(`/invoices/${hi.id}`);
+assert.match(r.text_, /£2\.99 to pay/);
+// Prepaid cards don't get it either.
+await env.DB.prepare("DELETE FROM login_attempts").run();
+r = await browser().post("/order/plus", { ...freeForm2, email: "ivy@example.net", label: "ivy.shop" });
+let is = await svcOf("ivy@example.net");
+fakeCards.pm_prepaid = { fingerprint: "fp_P", funding: "prepaid" };
+await setupDone(is.client_id, (await invOf(is.id)).id, "pm_prepaid");
+assert.equal((await invOf(is.id)).total, 299);
+// A code replaces the free month.
+await env.DB.prepare("DELETE FROM login_attempts").run();
+r = await browser().post("/order/plus", { ...freeForm2, email: "jo@example.net", label: "jo.shop", cycle: "annually", code: "half" });
+assert.equal((await invOf((await svcOf("jo@example.net")).id)).total, 1495);
+// Yearly: paid up front, the first term runs 13 months.
+await env.DB.prepare("DELETE FROM login_attempts").run();
+const kim = browser();
+r = await kim.post("/order/plus", { ...freeForm2, email: "kim@example.net", label: "kim.shop", cycle: "annually" });
+assert.equal(lastCheckout().get("mode"), "payment");
+let ks = await svcOf("kim@example.net");
+let ki = await invOf(ks.id);
+assert.equal(ki.total, 2990);
+assert.match((await q("SELECT description FROM invoice_items WHERE invoice_id = ? AND kind = 'service'", ki.id)).description, /includes a free month/);
+await webhook({ type: "checkout.session.completed", data: { object: { id: "cs_kim", object: "checkout.session", mode: "payment", payment_status: "paid", status: "complete", amount_total: 2990, payment_intent: "pi_kim", metadata: { purser_invoice: String(ki.id), purser_client: String(ks.client_id), save_card: "0" } } } });
+await new Promise((res) => setTimeout(res, 20));
+ks = await q("SELECT * FROM services WHERE id = ?", ks.id);
+assert.equal(ks.status, "active");
+assert.equal(ks.next_due, addMonths(today, 13));
+assert.equal((await q("SELECT status FROM free_months WHERE invoice_id = ?", ki.id)).status, "used");
+// Cancelling an unpaid free-month order frees the details up again.
+await env.DB.prepare("DELETE FROM login_attempts").run();
+r = await browser().post("/order/plus", { ...freeForm2, email: "lou@example.net", label: "lou.shop" });
+let li = await invOf((await svcOf("lou@example.net")).id);
+r = await admin.submit(`/admin/invoices/${li.id}`, `/admin/invoices/${li.id}/act`, { do: "cancel" });
+assert.equal((await q("SELECT status FROM free_months WHERE invoice_id = ?", li.id)).status, "void");
 
 // Migrations are idempotent.
 resetMigrationState();

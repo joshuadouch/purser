@@ -3,10 +3,11 @@
 import { all, batch, insert, one, run, stmt, update } from "./db.js";
 import { sendEmail } from "./email.js";
 import { nextInvoiceNumber } from "./settings.js";
-import { CYCLES, addDays, cycleEnd, fmtDate, fullName, money, nowIso, today } from "./util.js";
+import { CYCLES, addDays, addMonths, cycleEnd, fmtDate, fullName, money, nowIso, today } from "./util.js";
 import { BerthError, accountRef, berth, berthReady, externalId, parseLimits } from "./berth.js";
 import { cardLabel, stripe } from "./stripe.js";
 import { discountOn } from "./promo.js";
+import { REASONS, finalCheck, freeMonthFor, recordFreeMonth, voidFreeMonths } from "./freemonth.js";
 
 export const SYSTEM = { kind: "system", id: null, name: "System" };
 export const baseUrl = (env) => (env.PUBLIC_URL || "https://clientarea.ratlan.net").replace(/\/+$/, "");
@@ -60,9 +61,9 @@ export async function createInvoice(env, s, clientId, items, opts = {}) {
   const stage = opts.reminderStage ?? (dueWithin(due, Number(s.reminder_before_days) || 0) ? 1 : 0);
   const id = await insert(
     env,
-    `INSERT INTO invoices (number, client_id, status, issued, due, subtotal, tax_rate, tax_label, tax, total, notes, bill_to, reminder_stage, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    number, clientId, "unpaid", issued, due, t.subtotal, t.rate, t.label, t.tax, t.total, opts.notes || "", billTo(client), stage, nowIso(),
+    `INSERT INTO invoices (number, client_id, status, issued, due, subtotal, tax_rate, tax_label, tax, total, notes, bill_to, reminder_stage, free_month, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    number, clientId, "unpaid", issued, due, t.subtotal, t.rate, t.label, t.tax, t.total, opts.notes || "", billTo(client), stage, opts.freeMonth ? 1 : 0, nowIso(),
   );
   await batch(
     env,
@@ -76,6 +77,8 @@ export async function createInvoice(env, s, clientId, items, opts = {}) {
   );
   await log(env, opts.actor || SYSTEM, clientId, "invoice.created", `Invoice ${number} for ${money(t.total)}`);
   let inv = await getInvoice(env, id);
+  // A free-month invoice is £0 but waits for the customer's card.
+  if (opts.freeMonth) return inv;
   if (t.total <= 0) {
     await markPaidIfSettled(env, s, inv, opts.ctx);
     return getInvoice(env, id);
@@ -166,6 +169,7 @@ export async function cancelInvoice(env, s, inv, actor) {
     await run(env, "UPDATE invoices SET paid = 0 WHERE id = ?", inv.id);
     await addCredit(env, inv.client_id, inv.paid, `Payments on cancelled invoice ${inv.number}`, actor, inv.id);
   }
+  await voidFreeMonths(env, inv.id, "invoice cancelled");
   // An unpaid order invoice being cancelled cancels the order.
   for (const it of await getItems(env, inv.id)) {
     if (!it.service_id) continue;
@@ -177,6 +181,7 @@ export async function cancelInvoice(env, s, inv, actor) {
 // ---- after payment ----------------------------------------------------------
 
 async function onInvoicePaid(env, s, inv, ctx) {
+  await run(env, "UPDATE free_months SET status = 'used', used_at = ? WHERE invoice_id = ? AND status = 'pending' AND cycle != 'monthly'", nowIso(), inv.id);
   const items = await getItems(env, inv.id);
   const client = await getClient(env, inv.client_id);
   for (const it of items) {
@@ -193,6 +198,7 @@ async function onInvoicePaid(env, s, inv, ctx) {
       }
     }
   }
+  if (inv.free_month && inv.total <= 0) return; // nothing was paid: the free-month email covers it
   await sendEmail(env, s, {
     to: client.email,
     clientId: client.id,
@@ -497,6 +503,71 @@ export async function checkoutForCard(env, s, client) {
   return session.url;
 }
 
+// Free month: Stripe Checkout in setup mode saves the card for the renewal a
+// month from now. Nothing is charged today.
+export async function checkoutForFreeMonth(env, s, client, inv, renewal) {
+  const customer = await ensureStripeCustomer(env, s, client);
+  const origin = s.origin || baseUrl(env);
+  const session = await stripe(s, "POST", "/checkout/sessions", {
+    mode: "setup",
+    customer,
+    currency: s.currency.toLowerCase(),
+    payment_method_types: ["card"],
+    client_reference_id: String(inv.id),
+    metadata: { purser_client: client.id, purser_invoice: inv.id, purpose: "free_month" },
+    setup_intent_data: { metadata: { purser_client: client.id, purser_invoice: inv.id }, description: `${s.company_name} first month free, ${inv.number}` },
+    custom_text: renewal ? { submit: { message: renewal } } : undefined,
+    success_url: `${origin}/invoices/${inv.id}?checkout={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${origin}/invoices/${inv.id}`,
+  });
+  return session.url;
+}
+
+// The card is saved: start the free month, or (card, email or domain already
+// had one) put the full price back on the invoice for the customer to pay.
+export async function startFreeMonth(env, s, invoiceId, pm, ctx) {
+  const inv = await getInvoice(env, invoiceId);
+  if (!inv || inv.status !== "unpaid" || !inv.free_month) return { already: true };
+  const fm = await freeMonthFor(env, inv.id);
+  if (!fm || fm.status !== "pending") return { already: true };
+  const card = pm?.card || {};
+  const why = await finalCheck(env, fm, card);
+  if (why) {
+    await dropFreeMonth(env, s, inv, fm, why);
+    return { dropped: why };
+  }
+  // Only one request may start it (the redirect and the webhook race).
+  const won = await one(env, "UPDATE free_months SET status = 'used', card_fingerprint = ?, used_at = ? WHERE id = ? AND status = 'pending' RETURNING id", card.fingerprint || null, nowIso(), fm.id);
+  if (!won) return { already: true };
+  await run(env, "UPDATE clients SET auto_charge = 1 WHERE id = ?", inv.client_id);
+  await log(env, SYSTEM, inv.client_id, "free_month.started", `${inv.number}${card.last4 ? `, card ending ${card.last4}` : ""}`);
+  await markPaidIfSettled(env, s, inv, ctx);
+  const client = await getClient(env, inv.client_id);
+  const svc = fm.service_id ? await getService(env, fm.service_id) : null;
+  if (svc?.next_due) {
+    await sendEmail(env, s, {
+      to: client.email, clientId: client.id,
+      subject: `Your free month of ${svc.product_name} has started`,
+      lines: [
+        `Hi ${client.first_name || "there"},`,
+        `Your first month of ${svc.product_name}${svc.label ? ` for ${svc.label}` : ""} is free. Your hosting details are on their way in a separate email.`,
+        { rows: [["Free until", fmtDate(addDays(svc.next_due, -1))], ["Then", `${money(svc.price)} a month`], ["First payment", `${fmtDate(svc.next_due)}, from ${client.stripe_pm_label || "your saved card"}`]] },
+        "Not for you? Cancel any time before then from your client area and you won't pay anything.",
+        { button: { label: "Manage your service", url: `${baseUrl(env)}/services/${svc.id}` } },
+      ],
+    });
+  }
+  return { started: true };
+}
+
+async function dropFreeMonth(env, s, inv, fm, why) {
+  await run(env, "DELETE FROM invoice_items WHERE invoice_id = ? AND kind = 'free_month'", inv.id);
+  await run(env, "UPDATE invoices SET free_month = 0 WHERE id = ?", inv.id);
+  await recalcInvoice(env, s, inv.id);
+  await run(env, "UPDATE free_months SET status = 'void', void_reason = ? WHERE id = ?", why, fm.id);
+  await log(env, SYSTEM, inv.client_id, "free_month.refused", `${inv.number}: ${REASONS[why] || why}`);
+}
+
 export async function saveCard(env, s, clientId, pmId) {
   const pm = await stripe(s, "GET", `/payment_methods/${pmId}`);
   await update(env, "clients", clientId, { stripe_pm: pm.id, stripe_pm_label: cardLabel(pm) });
@@ -505,6 +576,7 @@ export async function saveCard(env, s, clientId, pmId) {
     await stripe(s, "POST", `/customers/${client.stripe_customer}`, { invoice_settings: { default_payment_method: pm.id } }).catch(() => {});
   }
   await log(env, SYSTEM, clientId, "card.saved", cardLabel(pm));
+  return pm;
 }
 
 // Handles a finished Checkout Session (from the webhook or the success redirect).
@@ -513,7 +585,13 @@ export async function handleCheckoutSession(env, s, session, ctx) {
   if (session.mode === "setup") {
     if (session.status !== "complete" || !session.setup_intent) return;
     const si = typeof session.setup_intent === "string" ? await stripe(s, "GET", `/setup_intents/${session.setup_intent}`) : session.setup_intent;
-    if (si.payment_method && clientId) await saveCard(env, s, clientId, typeof si.payment_method === "string" ? si.payment_method : si.payment_method.id);
+    if (!si.payment_method || !clientId) return;
+    const pm = await saveCard(env, s, clientId, typeof si.payment_method === "string" ? si.payment_method : si.payment_method.id);
+    const invoiceId = Number(session.metadata?.purser_invoice);
+    if (session.metadata?.purpose === "free_month" && invoiceId) {
+      const inv = await getInvoice(env, invoiceId);
+      if (inv?.client_id === clientId) return startFreeMonth(env, s, invoiceId, pm, ctx);
+    }
     return;
   }
   if (session.payment_status !== "paid") return;
@@ -599,7 +677,9 @@ export function productPrice(p, cycle) {
 export const productCycles = (p) => Object.keys(CYCLES).filter((c) => productPrice(p, c) !== null);
 
 // promo: a row from promo_codes, already checked with checkPromo.
-export async function placeOrder(env, s, client, product, { cycle, label, actor, ctx, invoice = true, promo = null }) {
+// freeMonth: "monthly" (first month £0, card saved first) or "annually" (13
+// months for the price of 12), already checked with freeMonthBlock.
+export async function placeOrder(env, s, client, product, { cycle, label, actor, ctx, invoice = true, promo = null, freeMonth = null }) {
   const price = productPrice(product, cycle);
   if (price === null) throw new Error("That billing cycle isn't offered for this product");
   // A recurring code lowers the price the service renews at, too.
@@ -611,13 +691,21 @@ export async function placeOrder(env, s, client, product, { cycle, label, actor,
   await log(env, actor, client.id, "order.placed", `${product.name}${label ? ` (${label})` : ""}, ${CYCLES[cycle].label.toLowerCase()} at ${money(renewPrice)}${promo ? ` with code ${promo.code}` : ""}`);
   if (!invoice) return { serviceId: sid };
   const start = today();
-  const end = cycleEnd(start, cycle);
-  const desc = `${product.name}${label ? ` - ${label}` : ""}${end ? ` (${fmtDate(start)} to ${fmtDate(addDays(end, -1))})` : ""}`;
+  if (promo) freeMonth = null; // codes and the free month don't stack
+  let end = cycleEnd(start, cycle);
+  if (freeMonth === "annually" && end) end = addMonths(end, 1);
+  const desc = `${product.name}${label ? ` - ${label}` : ""}${end ? ` (${fmtDate(start)} to ${fmtDate(addDays(end, -1))})` : ""}${freeMonth === "annually" ? ", includes a free month" : ""}`;
   const items = [{ service_id: sid, kind: "service", description: desc, amount: price, period_start: start, period_end: end }];
   if (product.setup_fee) items.push({ service_id: sid, kind: "setup", description: `${product.name} set-up fee`, amount: product.setup_fee });
   const off = promo ? discountOn(promo, items.reduce((a, i) => a + i.amount, 0)) : 0;
   if (off > 0) items.push({ service_id: sid, kind: "discount", description: `Discount code ${promo.code}`, amount: -off });
-  const inv = await createInvoice(env, s, client.id, items, { due: start, actor, ctx });
+  const trial = freeMonth === "monthly" && cycle === "monthly";
+  if (trial) items.push({ service_id: sid, kind: "free_month", description: "First month free (new customers)", amount: -(price + (product.setup_fee || 0)) });
+  const inv = await createInvoice(env, s, client.id, items, { due: start, actor, ctx, freeMonth: trial });
+  if (freeMonth === "annually" || trial) {
+    await recordFreeMonth(env, { client, serviceId: sid, invoiceId: inv.id, cycle, label });
+    // Yearly: counts as used once the year is paid for (see onInvoicePaid).
+  }
   if (promo) {
     await insert(
       env, "INSERT INTO promo_redemptions (promo_id, client_id, service_id, invoice_id, amount, created_at) VALUES (?,?,?,?,?,?)",
@@ -625,7 +713,7 @@ export async function placeOrder(env, s, client, product, { cycle, label, actor,
     );
   }
   await notifyAdmin(env, s, `New order from ${client.email}`, [
-    `${fullName(client) || client.email} ordered ${product.name}${label ? ` (${label})` : ""}, ${CYCLES[cycle].label.toLowerCase()} at ${money(renewPrice)}${promo ? `, with discount code ${promo.code} (${money(off)} off the first invoice)` : ""}.`,
+    `${fullName(client) || client.email} ordered ${product.name}${label ? ` (${label})` : ""}, ${CYCLES[cycle].label.toLowerCase()} at ${money(renewPrice)}${promo ? `, with discount code ${promo.code} (${money(off)} off the first invoice)` : ""}${trial ? ", with the first month free (once their card is saved)" : freeMonth === "annually" ? ", with a free 13th month" : ""}.`,
     { button: { label: "Open client", url: `${baseUrl(env)}/admin/clients/${client.id}` } },
   ]);
   return { serviceId: sid, invoice: inv };

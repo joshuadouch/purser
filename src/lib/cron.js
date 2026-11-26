@@ -85,7 +85,8 @@ async function autoCharge(env, s, day, ctx) {
 async function reminders(env, s, day) {
   const before = Number(s.reminder_before_days) || 0;
   const steps = String(s.overdue_reminders || "").split(",").map((x) => parseInt(x, 10)).filter((n) => n > 0).sort((a, b) => a - b);
-  const rows = await all(env, "SELECT * FROM invoices WHERE status = 'unpaid' AND due <= ?", addDays(day, before));
+  // A free-month order waiting for its card owes nothing, so no reminders.
+  const rows = await all(env, "SELECT * FROM invoices WHERE status = 'unpaid' AND due <= ? AND NOT (free_month = 1 AND total <= 0)", addDays(day, before));
   let sent = 0;
   for (const inv of rows) {
     const late = daysBetween(inv.due, day);
