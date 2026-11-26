@@ -7,6 +7,7 @@ import { sendEmail } from "./email.js";
 import { baseUrl, log, notifyAdmin } from "./billing.js";
 import { field, turnstile } from "./ui.js";
 import { clean, isEmail, nowIso } from "./util.js";
+import { visitSignedUp } from "./analytics.js";
 
 // The account fields, shared by the registration and checkout forms.
 export const accountFields = (c, v = {}) => html`
@@ -47,6 +48,7 @@ export async function signUp(c, f) {
     clean(f.get("phone"), 40), nowIso(), c.s.brand || null,
   );
   await log(c.env, { kind: "client", id, name: email }, id, "client.registered", email);
+  await visitSignedUp(c.env, c.visitId, id);
   const t = await makeToken(c.env, "verify", id, 72);
   await sendEmail(c.env, c.s, {
     to: email, clientId: id,

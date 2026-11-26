@@ -6,6 +6,7 @@ import { FLASH, Router, notFound, parseForm, readFlash, sameOrigin, forbidden, w
 import { authPage } from "./lib/ui.js";
 import { html } from "./lib/html.js";
 import { runDaily } from "./lib/cron.js";
+import { collect, trackArrival } from "./lib/analytics.js";
 import publicRoutes from "./routes/public.js";
 import clientRoutes from "./routes/client.js";
 import ticketRoutes from "./routes/tickets.js";
@@ -13,9 +14,10 @@ import adminRoutes from "./routes/admin.js";
 import adminBillingRoutes from "./routes/admin-billing.js";
 import adminSettingsRoutes from "./routes/admin-settings.js";
 import webhookRoutes from "./routes/webhooks.js";
+import adminAnalyticsRoutes from "./routes/admin-analytics.js";
 
 const router = new Router();
-for (const register of [webhookRoutes, publicRoutes, clientRoutes, ticketRoutes, adminRoutes, adminBillingRoutes, adminSettingsRoutes]) register(router);
+for (const register of [webhookRoutes, publicRoutes, clientRoutes, ticketRoutes, adminRoutes, adminBillingRoutes, adminSettingsRoutes, adminAnalyticsRoutes]) register(router);
 
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
@@ -36,7 +38,13 @@ export default {
       // Where this request came in (clientarea.ratlan.net, a brand's own address...),
       // so Stripe sends people back to the same place.
       c.s.origin = url.origin;
+      // Page-view beacons from the brand websites (see lib/analytics.js).
+      if (url.pathname === "/v" && req.method === "POST") {
+        await resolveBrand(c);
+        return await collect(c);
+      }
       res = await resolveBrand(c);
+      res ||= await trackArrival(c);
       const m = res ? null : router.match(req.method, url.pathname);
       if (res) {
         // ?brand= link: cookie set, redirected to the clean address.
@@ -67,6 +75,7 @@ export default {
     }
     const out = new Response(res.body, res);
     if (c.setBrandCookie) out.headers.append("Set-Cookie", c.setBrandCookie);
+    if (c.setVisitCookie) out.headers.append("Set-Cookie", c.setVisitCookie);
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) if (!out.headers.has(k)) out.headers.set(k, v);
     // A flash message is shown once: clear it unless this response sets a new one.
     if (c.flash && !(out.headers.get("set-cookie") || "").includes(`${FLASH}=`)) {

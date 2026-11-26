@@ -352,7 +352,7 @@ export default function (r) {
       const pendingOrders = await one(c.env, "SELECT COUNT(*) AS n FROM services WHERE client_id = ? AND status = 'pending'", client.id);
       if (pendingOrders.n >= 5) return redirect("/invoices", "You have several unpaid orders. Pay or cancel those first.", "err");
     }
-    const { invoice } = await placeOrder(c.env, c.s, client, p, { cycle, label, actor, ctx: c.ctx, promo });
+    const { invoice } = await placeOrder(c.env, c.s, client, p, { cycle, label, actor, ctx: c.ctx, promo, visitId: c.visitId || client.visit_id || null });
     if (invoice.status === "paid") return redirect("/services", "Thanks! Your order is being set up.", "ok", cookies);
     if (c.s.stripe_secret_key) {
       try {

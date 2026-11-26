@@ -615,6 +615,63 @@ r = await admin.get("/admin/promos");
 assert.match(r.text_, /TEST100/);
 assert.match(r.text_, /100% off your first invoice/);
 
+// ---- visit tracking ---------------------------------------------------------------------------
+const beacon = (body, h = {}) => worker.fetch(new Request("https://clientarea.test/v", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "text/plain", ...h } }), env, ctx);
+const vid = "a1b2c3d4e5f6a7b8c9d0";
+assert.equal((await beacon({ v: vid, b: "purehost", p: "/web-hosting/", s: "newsletter", m: "email", c: "black-friday", r: "mail.example.com", l: "/web-hosting/" })).status, 204);
+assert.equal((await beacon({ v: vid, b: "purehost", p: "/wordpress-hosting/", s: "newsletter", m: "email", c: "black-friday", l: "/web-hosting/" })).status, 204);
+await beacon({ v: "ffffeeeeddddcccc0000", p: "/" }, { "sec-gpc": "1" });
+await beacon({ v: "bad id!", p: "/" });
+await beacon({ v: "googlebotvisit000000", p: "/" }, { "user-agent": "Googlebot/2.1" });
+let visit = await q("SELECT * FROM visits WHERE id = ?", vid);
+assert.equal(visit.pages, 2);
+assert.equal(visit.source, "newsletter");
+assert.equal(visit.medium, "email");
+assert.equal(visit.brand, "purehost");
+assert.equal(visit.landing, "/web-hosting/");
+assert.equal((await q("SELECT COUNT(*) AS n FROM visits WHERE id IN ('ffffeeeeddddcccc0000', 'bad id!', 'googlebotvisit000000')")).n, 0, "opted-out, bad and bot beacons are dropped");
+assert.equal((await q("SELECT views FROM page_views WHERE path = '/wordpress-hosting/'")).views, 1);
+// Following a website link into the client area: cookie, clean address.
+const fran = browser();
+r = await fran.get(`/order/plus?cycle=monthly&_v=${vid}&_a=${encodeURIComponent(JSON.stringify({ s: "x" }))}`);
+assert.equal(r.status, 302);
+assert.equal(r.headers.get("location"), "/order/plus?cycle=monthly");
+assert.equal(fran.jar.get("purser_v"), vid);
+assert.equal((await q("SELECT reached_ca, source FROM visits WHERE id = ?", vid)).source, "newsletter", "the first beacon's source wins");
+r = await fran.post("/order/plus", { ...freeForm, email: "fran@example.com", label: "fran.dev" }, { "cf-connecting-ip": "203.0.113.20" });
+assert.equal(see(r, "tracked order"), "/services");
+await new Promise((res) => setTimeout(res, 20));
+visit = await q("SELECT * FROM visits WHERE id = ?", vid);
+assert.equal(visit.reached_ca, 1);
+assert.ok(visit.signup_at && visit.order_at && visit.paid_at, "sign-up, order and payment recorded");
+assert.equal(visit.orders, 1);
+assert.equal(visit.revenue, 0, "free first month: nothing taken");
+assert.equal(visit.mrr, 299);
+const fran1 = await q("SELECT * FROM clients WHERE email = 'fran@example.com'");
+assert.equal(fran1.visit_id, vid);
+assert.equal((await q("SELECT visit_id FROM services WHERE client_id = ?", fran1.id)).visit_id, vid);
+// Landing straight on an order page from a Google ad starts a visit there.
+const gus = browser();
+r = await gus.get("/order/plus?gclid=abc", { referer: "https://www.google.com/" });
+ok200(r, "ad landing");
+assert.ok(gus.jar.get("purser_v"));
+visit = await q("SELECT * FROM visits WHERE id = ?", gus.jar.get("purser_v"));
+assert.equal(`${visit.source}/${visit.medium}`, "google/cpc");
+assert.equal(visit.landing, "clientarea.test/order/plus");
+// A signed-in order without a visit cookie still counts towards the sign-up visit.
+r = await fran.submit("/order/plus", "/order/plus", { cycle: "annually", label: "fran2.dev" });
+assert.equal(see(r, "second order"), "https://checkout.stripe.test/cs_test_1");
+assert.equal((await q("SELECT orders FROM visits WHERE id = ?", vid)).orders, 2);
+r = await admin.get("/admin/analytics");
+ok200(r, "analytics");
+assert.match(r.text_, /newsletter \/ email/);
+assert.match(r.text_, /black-friday/);
+assert.match(r.text_, /google \/ cpc/);
+assert.ok(r.text_.includes(`href="/admin/clients/${fran1.id}"`), "recent conversions link the client");
+ok200(await admin.get("/admin/analytics?days=7&brand=purehost"), "analytics brand filter");
+ok200(await admin.get("/admin/analytics?days=365&brand="), "analytics house brand");
+assert.equal(see(await browser().get("/admin/analytics"), "analytics needs staff").startsWith("/admin/login"), true);
+
 // ---- mail joins the client's hosting account -----------------------------------------------
 await env.DB.prepare(`INSERT INTO products (name, type, berth_plan, berth_limits, price_monthly, created_at) VALUES ('Business Email', 'hosting', 'Business Email', '{"mail_domains":1,"no_sites":true}', 100, ?)`).bind(new Date().toISOString()).run();
 const mailProd = (await q("SELECT id FROM products WHERE name = 'Business Email'")).id;
