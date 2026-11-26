@@ -8,6 +8,8 @@ Live at **https://clientarea.ratlan.net** (staff: `/admin`).
 
 **Clients** sign up, order a plan, pay by card (Stripe Checkout) and can save the card so renewals are charged on the due date. They see their services, invoices and credit, open and reply to support tickets with attachments, sign straight into Berth with one click, reset their Berth password and cancel at the end of a term.
 
+**Free migration requests**: `/migrate` (optionally `?site=example.co.uk`) is a public form the brand websites link to. It opens a Sales ticket. Signed-in clients get it on their account; a new visitor gets a client record with no password and an email link to set one, so they can follow the ticket and use the same account when they order. Turnstile, a honeypot and a 5-an-hour limit per IP keep bots out.
+
 **Staff** get a dashboard (income, outstanding, MRR, tickets waiting), clients (edit, credit, log in as client, password resets), services (suspend, unsuspend, terminate, change plan, link an existing Berth account), invoices (manual invoices, edit lines, record bank/cash payments, apply credit, charge the saved card, refund through Stripe, print or save as PDF), tickets (departments, assignment, priorities, internal notes, signatures), products, settings, staff with admin/support roles and two-step sign-in, an activity log and an email log.
 
 **Every day at 07:00 UTC** a cron run:

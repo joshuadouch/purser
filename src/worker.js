@@ -9,13 +9,14 @@ import { runDaily } from "./lib/cron.js";
 import publicRoutes from "./routes/public.js";
 import clientRoutes from "./routes/client.js";
 import ticketRoutes from "./routes/tickets.js";
+import migrateRoutes from "./routes/migrate.js";
 import adminRoutes from "./routes/admin.js";
 import adminBillingRoutes from "./routes/admin-billing.js";
 import adminSettingsRoutes from "./routes/admin-settings.js";
 import webhookRoutes from "./routes/webhooks.js";
 
 const router = new Router();
-for (const register of [webhookRoutes, publicRoutes, clientRoutes, ticketRoutes, adminRoutes, adminBillingRoutes, adminSettingsRoutes]) register(router);
+for (const register of [webhookRoutes, publicRoutes, clientRoutes, ticketRoutes, migrateRoutes, adminRoutes, adminBillingRoutes, adminSettingsRoutes]) register(router);
 
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",

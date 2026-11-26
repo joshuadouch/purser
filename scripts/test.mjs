@@ -733,6 +733,56 @@ async function sendEmailForTest() {
   assert.equal(rehost("https://berth.test/sso/abc?x=1", "https://cp.example"), "https://cp.example/sso/abc?x=1");
 }
 
+// ---- free migration requests ---------------------------------------------------------------
+const tick = () => new Promise((res) => setTimeout(res, 30));
+const visitor = browser();
+r = await visitor.get("/migrate?site=https%3A%2F%2Fwww.Moved-Site.co.uk%2F");
+ok200(r, "migration form");
+assert.match(r.text_, /name="site"[^>]*value="https:\/\/www\.Moved-Site\.co\.uk\/"/);
+assert.match(r.text_, /class="site-foot"/);
+// The honeypot drops bots quietly.
+r = await visitor.post("/migrate", { name: "Bot", email: "bot@example.com", site: "spam.example", website_url: "http://x" });
+assert.equal(see(r, "honeypot"), "/migrate/thanks");
+assert.equal(await q("SELECT id FROM clients WHERE email = 'bot@example.com'"), null);
+r = await visitor.post("/migrate", { name: "Mo Ved", email: "nope", site: "moved-site.co.uk" });
+assert.match(see(r, "bad email"), /^\/migrate\?site=/);
+r = await visitor.post("/migrate", { name: "Mo Ved", email: "Mo@Example.com", site: "https://www.Moved-Site.co.uk/", host: "OldHost", kind: "wordpress", mail: "move", stage: "advice", notes: "Renewal is due on 1 Dec." });
+assert.equal(see(r, "guest migration"), "/migrate/thanks");
+ok200(await visitor.get("/migrate/thanks"), "thanks page");
+await tick();
+const mo = await q("SELECT * FROM clients WHERE email = 'mo@example.com'");
+assert.ok(mo && !mo.password_hash, "lead client without a password");
+assert.equal(mo.first_name, "Mo");
+const moTicket = await q("SELECT t.*, d.name AS dept FROM tickets t LEFT JOIN departments d ON d.id = t.department_id WHERE client_id = ?", mo.id);
+assert.equal(moTicket.subject, "Free migration: moved-site.co.uk");
+assert.equal(moTicket.dept, "Sales");
+const moMsg = await q("SELECT body FROM ticket_messages WHERE ticket_id = ?", moTicket.id);
+assert.match(moMsg.body, /Current host: OldHost/);
+assert.match(moMsg.body, /Yes, move my email too/);
+assert.match(moMsg.body, /Renewal is due/);
+const moMail = lastMailTo("mo@example.com");
+assert.match(qpDecode(moMail.raw), /migration request/);
+const setPw = linkIn(moMail, /https:\/\/clientarea\.test\/reset\/[\w-]+/);
+assert.ok(mails.some((m) => qpDecode(m.raw).includes("Free migration: moved-site.co.uk") && m.to !== "mo@example.com"), "staff told about the request");
+// Setting the password signs them in and shows the ticket.
+r = await visitor.post(new URL(setPw).pathname, { password: "mo-password-123" });
+assert.equal(see(r, "lead sets password"), "/");
+r = await visitor.get(`/tickets/${moTicket.id}`);
+ok200(r, "lead sees ticket");
+assert.match(r.text_, /Free migration: moved-site\.co\.uk/);
+// Signed in: no name or email asked, ticket goes straight on the account.
+r = await visitor.get("/migrate");
+assert.doesNotMatch(r.text_, /name="email"/);
+r = await visitor.submit("/migrate", "/migrate", { site: "second.example", kind: "php", mail: "stay", stage: "ordered" });
+assert.match(see(r, "client migration"), /^\/tickets\/\d+$/);
+assert.equal((await q("SELECT COUNT(*) AS n FROM tickets WHERE client_id = ?", mo.id)).n, 2);
+// A guest using an existing account's email adds to that account without signing in, and gets no reset link.
+r = await browser().post("/migrate", { name: "Mo", email: "mo@example.com", site: "third.example" });
+assert.equal(see(r, "existing email"), "/migrate/thanks");
+await tick();
+assert.equal((await q("SELECT COUNT(*) AS n FROM tickets WHERE client_id = ?", mo.id)).n, 3);
+assert.doesNotMatch(qpDecode(lastMailTo("mo@example.com").raw), /\/reset\//);
+
 // Migrations are idempotent.
 resetMigrationState();
 ok200(await alice.get("/"), "after re-migrate");
