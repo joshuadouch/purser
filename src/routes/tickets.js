@@ -71,7 +71,7 @@ function renderThread(msgs, fileBase) {
 
 const fileInput = html`<div class="field"><label for="f_files">Attachments <small>optional, up to 5 files of 10 MB</small></label><input id="f_files" type="file" name="files" multiple></div>`;
 
-async function notifyStaff(c, ticket, body, kind) {
+export async function notifyStaff(c, ticket, body, kind, client = c.client) {
   const dept = ticket.department_id ? await one(c.env, "SELECT * FROM departments WHERE id = ?", ticket.department_id) : null;
   const to = dept?.email || c.s.admin_notify_email || c.env.ADMIN_EMAIL;
   if (!to) return;
@@ -79,7 +79,7 @@ async function notifyStaff(c, ticket, body, kind) {
     to,
     subject: `[Ticket #${ticket.id}] ${kind === "new" ? "New: " : "Reply: "}${ticket.subject}`,
     lines: [
-      `${c.client.email} ${kind === "new" ? "opened a ticket" : "replied"}${dept ? ` in ${dept.name}` : ""}.`,
+      `${client.email} ${kind === "new" ? "opened a ticket" : "replied"}${dept ? ` in ${dept.name}` : ""}.`,
       { quote: body.slice(0, 4000) },
       { button: { label: "Open ticket", url: `${baseUrl(c.env)}/admin/tickets/${ticket.id}` } },
     ],

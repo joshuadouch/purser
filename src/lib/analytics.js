@@ -153,7 +153,7 @@ export async function trackArrival(c) {
   }
   // Landed on the client area directly (an ad or a search result pointing at an
   // order page): start a visit here.
-  if (tracked && c.req.method === "GET" && /^\/(order|register)(\/|$)/.test(p) && !/\/code$/.test(p) && !getCookie(c.req, "purser_c")) {
+  if (tracked && c.req.method === "GET" && /^\/(order|register|migrate)(\/|$)/.test(p) && !/\/code$/.test(p) && !getCookie(c.req, "purser_c")) {
     const id = crypto.randomUUID().replace(/-/g, "");
     const q = c.url.searchParams;
     const ref = hostOf(c.req.headers.get("referer") || "");
