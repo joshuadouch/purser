@@ -1,4 +1,5 @@
 // The client area: dashboard, services, invoices, ordering and account pages.
+import { rehost } from "../lib/brands.js";
 import { html, raw, textBlock } from "../lib/html.js";
 import { all, one, run, update } from "../lib/db.js";
 import { hashPassword, passwordProblem, verifyPassword } from "../lib/auth.js";
@@ -129,7 +130,7 @@ export default function (r) {
     try {
       const link = await berth(c.s, "POST", `/accounts/${accountRef(s)}/login-link`);
       await log(c.env, c.actor, c.client.id, "service.panel_login", s.label || s.product_name);
-      return redirect(link.url);
+      return redirect(rehost(link.url, c.s.panel_url));
     } catch (e) {
       return redirect(`/services/${s.id}`, `Couldn't open the control panel: ${e.message}`, "err");
     }

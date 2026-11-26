@@ -14,6 +14,8 @@ import { addDays, addMonths, parseMoney, money } from "../src/lib/util.js";
 import { totpCode, verifyTotp, hashPassword, verifyPassword } from "../src/lib/auth.js";
 import { formEncode } from "../src/lib/stripe.js";
 import { esc, html } from "../src/lib/html.js";
+import { sendEmail } from "../src/lib/email.js";
+import { rehost } from "../src/lib/brands.js";
 
 // ---- unit checks ----------------------------------------------------------------
 assert.equal(addMonths("2026-01-31", 1), "2026-02-28");
@@ -702,6 +704,11 @@ assert.match(r.text_, /theme\.css/);
 r = await rv.get("/login", { referer: "https://ratlan.net/" });
 assert.ok(!r.text_.includes("theme.css"));
 assert.ok(!rv.jar.has("purser_brand"));
+// The brand's own address always shows the brand, and its links use that address.
+const hostRes = await worker.fetch(new Request("https://clientarea.purehost.co.uk/login", { headers: { "cf-connecting-ip": "203.0.113.9" } }), env, ctx);
+assert.match(await hostRes.text(), /<title>[^<]*PureHost<\/title>/);
+const piaSvcProduct = (await q("SELECT id FROM products ORDER BY id LIMIT 1")).id;
+await sendEmailForTest(piaSvcProduct);
 // Staff manage brands and a client's brand.
 r = await admin.get("/admin/settings?tab=brands");
 ok200(r, "brands tab");
@@ -715,6 +722,16 @@ assert.equal((await q("SELECT name, site_url FROM brands WHERE slug = 'purehost'
 r = await admin.submit(`/admin/clients/${piaId}?tab=details`, `/admin/clients/${piaId}`, { first_name: "Pia", email: "pia@example.com", brand: "" });
 see(r, "unbrand client");
 assert.equal((await q("SELECT brand FROM clients WHERE id = ?", piaId)).brand, null);
+
+async function sendEmailForTest() {
+  const piaId = (await q("SELECT id FROM clients WHERE email = 'pia@example.com'")).id;
+  const s0 = await loadSettings(env);
+  await sendEmail(env, s0, { to: "pia@example.com", clientId: piaId, subject: "Links", lines: [{ button: { label: "Go", url: "https://clientarea.test/invoices/1" } }, { rows: [["Control panel", "https://berth.test/login"]] }] });
+  const raw = qpDecode(lastMailTo("pia@example.com").raw);
+  assert.ok(raw.includes("https://clientarea.purehost.co.uk/invoices/1"), "client area link on the brand's host");
+  assert.ok(raw.includes("https://controlpanel.purehost.co.uk/login"), "panel link on the brand's host");
+  assert.equal(rehost("https://berth.test/sso/abc?x=1", "https://cp.example"), "https://cp.example/sso/abc?x=1");
+}
 
 // Migrations are idempotent.
 resetMigrationState();

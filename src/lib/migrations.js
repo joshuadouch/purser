@@ -314,6 +314,15 @@ export const MIGRATIONS = [
         '/web-hosting/#plans', 'https://purehost.co.uk/legal/terms/', 'PureHost', 'https://purehost.co.uk/brand/mark-512.png', '2026-11-26T00:00:00.000Z')`,
     ],
   },
+  {
+    id: 7,
+    name: "brand hostnames",
+    sql: [
+      `ALTER TABLE brands ADD COLUMN host TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE brands ADD COLUMN panel_url TEXT NOT NULL DEFAULT ''`,
+      `UPDATE brands SET host = 'clientarea.purehost.co.uk', panel_url = 'https://controlpanel.purehost.co.uk' WHERE slug = 'purehost'`,
+    ],
+  },
 ];
 
 let applied = null;

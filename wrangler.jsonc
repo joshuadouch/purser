@@ -9,7 +9,11 @@
   // Test address: https://purser.ratlan.workers.dev
   "workers_dev": true,
   "preview_urls": true,
-  "routes": [{ "pattern": "clientarea.ratlan.net", "custom_domain": true }],
+  // clientarea.purehost.co.uk is the PureHost brand's own address (see the brands table).
+  "routes": [
+    { "pattern": "clientarea.ratlan.net", "custom_domain": true },
+    { "pattern": "clientarea.purehost.co.uk", "custom_domain": true }
+  ],
   "d1_databases": [{ "binding": "DB", "database_name": "purser", "database_id": "7adfe22c-8b56-4602-b8da-b0ddc8edcffb" }],
   // Ticket attachments.
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "purser-attachments" }],
