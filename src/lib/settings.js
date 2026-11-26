@@ -33,6 +33,10 @@ export const DEFAULTS = {
   auto_charge_retry_days: "3",
   auto_apply_credit: "1",
   bank_details: "",
+  // First month free for new customers (src/lib/freemonth.js). Monthly orders
+  // pay nothing today but must save a card; yearly orders get 13 months.
+  free_month: "0",
+  free_month_annual: "1",
   allow_registration: "1",
   ticket_autoclose_days: "7",
   admin_notify_email: "",

@@ -11,9 +11,11 @@ import {
 } from "../lib/billing.js";
 import { accountRef, berth, berthReady } from "../lib/berth.js";
 import { stripe } from "../lib/stripe.js";
-import { CYCLES, clean, fmtDate, fullName, money, nowIso, today } from "../lib/util.js";
+import { CYCLES, addMonths, clean, fmtDate, fullName, money, nowIso, today } from "../lib/util.js";
 import { accountFields, signUp } from "../lib/signup.js";
 import { checkPromo, describePromo, discountOn, normCode } from "../lib/promo.js";
+import { checkoutForFreeMonth } from "../lib/billing.js";
+import { REASONS, freeMonthBlock, offerLines } from "../lib/freemonth.js";
 
 export default function (r) {
   const C = requireClient;
@@ -200,7 +202,14 @@ export default function (r) {
       } catch (e) {
         console.error("checkout return", e);
       }
+      const was = inv;
       inv = await getInvoice(c.env, inv.id);
+      if (was.free_month && inv.status === "paid") return redirect("/services", "Card saved. Your free month has started and your hosting is being set up.");
+      if (was.free_month && !inv.free_month) {
+        const fm = await one(c.env, "SELECT void_reason FROM free_months WHERE invoice_id = ? ORDER BY id DESC LIMIT 1", inv.id);
+        return redirect(`/invoices/${inv.id}`, `Sorry, we can't give this order a free month: ${REASONS[fm?.void_reason] || "it's for new customers only"}. Your card is saved, so you can pay the first month below.`, "err");
+      }
+      if (was.free_month && inv.status === "unpaid") return redirect(`/invoices/${inv.id}`, "We didn't get your card details. Add a card below to start your free month.", "err");
       return inv.status === "paid"
         ? redirect(`/invoices/${inv.id}`, "Thanks! Your payment went through.")
         : redirect(`/invoices/${inv.id}`, "Thanks. Your payment is processing and this page will update once it clears.");
@@ -212,7 +221,9 @@ export default function (r) {
     const inv = await myInvoice(c);
     if (!inv || inv.status !== "unpaid") return redirect(`/invoices/${c.params.id}`);
     try {
-      const url = await checkoutForInvoice(c.env, c.s, c.client, inv, { saveCard: c.form.get("save_card") === "1" });
+      const url = inv.free_month && inv.total <= 0
+        ? await checkoutForFreeMonth(c.env, c.s, c.client, inv, await renewalNote(c, inv))
+        : await checkoutForInvoice(c.env, c.s, c.client, inv, { saveCard: c.form.get("save_card") === "1" });
       return redirect(url);
     } catch (e) {
       return redirect(`/invoices/${inv.id}`, `Card payments aren't working right now: ${e.message}`, "err");
@@ -265,6 +276,13 @@ export default function (r) {
     const guest = !c.client;
     const canRegister = c.s.allow_registration === "1";
     const next = encodeURIComponent(c.url.pathname + c.url.search);
+    // First month free: what each billing period gets, for this visitor.
+    const start = today();
+    const offer = {};
+    for (const cy of cycles) {
+      if (!(await freeMonthBlock(c.env, c.s, { product: p, cycle: cy, client: c.client }))) offer[cy] = offerLines(productPrice(p, cy), cy, start);
+    }
+    const anyOffer = Object.keys(offer).length > 0;
     const summary = html`<aside class="card summary">
       <div class="eyebrow">Your order</div>
       <h3>${p.name}</h3>
@@ -273,8 +291,19 @@ export default function (r) {
         ${cycles.map((cy) => html`<div data-cycle-line="${cy}"${cy === picked ? "" : raw(" hidden")}><dt>${CYCLES[cy].label}</dt><dd>${money(productPrice(p, cy))}</dd></div>`)}
         ${p.setup_fee ? html`<div><dt>Set-up</dt><dd>${money(p.setup_fee)}</dd></div>` : ""}
       </dl>
-      ${cycles.map((cy) => html`<div class="sum-total" data-cycle-line="${cy}"${cy === picked ? "" : raw(" hidden")}><span>Due today</span><b>${money(productPrice(p, cy) + (p.setup_fee || 0))}</b></div>
-        ${perLong[cy] ? html`<p class="small muted" data-cycle-line="${cy}"${cy === picked ? "" : raw(" hidden")}>Then ${money(productPrice(p, cy))} a ${perLong[cy]}, the same price every time it renews. Cancel any time.</p>` : ""}`)}
+      ${cycles.map((cy) => {
+        const hide = cy === picked ? "" : raw(" hidden");
+        const o = offer[cy];
+        if (o && cy === "monthly") {
+          return html`<div data-cycle-line="${cy}"${hide}><dl class="sum-lines free"><div class="free-line"><dt>First month free</dt><dd>${money(-(productPrice(p, cy) + (p.setup_fee || 0)))}</dd></div></dl></div>
+          <div class="sum-total" data-cycle-line="${cy}"${hide}><span>Due today</span><b>${money(0)}</b></div>
+          <p class="small muted" data-cycle-line="${cy}"${hide}>${o.then} You'll save a card at checkout; it isn't charged today.</p>`;
+        }
+        return html`${o ? html`<p class="free-note" data-cycle-line="${cy}"${hide}>${icon("check")} <span>${o.then}</span></p>` : ""}
+        <div class="sum-total" data-cycle-line="${cy}"${hide}><span>Due today</span><b>${money(productPrice(p, cy) + (p.setup_fee || 0))}</b></div>
+        ${perLong[cy] ? html`<p class="small muted" data-cycle-line="${cy}"${hide}>Then ${money(productPrice(p, cy))} a ${perLong[cy]}, the same price every time it renews. Cancel any time.</p>` : ""}`;
+      })}
+      ${anyOffer ? html`<p class="small muted">The free month is for new customers: one per person, website domain and card. It can't be combined with a discount code.</p>` : ""}
     </aside>`;
     const form = html`<form method="post" class="stack order-form">${csrf(c)}
         <section class="card">
@@ -320,7 +349,8 @@ export default function (r) {
     if (res.error) return json({ ok: false, message: res.error });
     const first = price + (p.setup_fee || 0);
     const off = discountOn(res.promo, first);
-    return json({ ok: true, code: res.promo.code, message: `${res.promo.code}: ${describePromo(res.promo)}. You'll pay ${money(first - off)} today instead of ${money(first)}.` });
+    const free = !(await freeMonthBlock(c.env, c.s, { product: p, cycle, client: c.client }));
+    return json({ ok: true, code: res.promo.code, message: `${res.promo.code}: ${describePromo(res.promo)}. You'll pay ${money(first - off)} today instead of ${money(first)}.${free ? " This replaces the free month, which can't be combined with a code." : ""}` });
   });
 
   r.post("/order/:id", O, async (c) => {
@@ -352,8 +382,18 @@ export default function (r) {
       const pendingOrders = await one(c.env, "SELECT COUNT(*) AS n FROM services WHERE client_id = ? AND status = 'pending'", client.id);
       if (pendingOrders.n >= 5) return redirect("/invoices", "You have several unpaid orders. Pay or cancel those first.", "err");
     }
-    const { invoice } = await placeOrder(c.env, c.s, client, p, { cycle, label, actor, ctx: c.ctx, promo, visitId: c.visitId || client.visit_id || null });
+    const block = promo ? "code" : await freeMonthBlock(c.env, c.s, { product: p, cycle, client, label });
+    const freeMonth = block ? null : cycle;
+    const { invoice } = await placeOrder(c.env, c.s, client, p, { cycle, label, actor, ctx: c.ctx, promo, freeMonth, visitId: c.visitId || client.visit_id || null });
     if (invoice.status === "paid") return redirect("/services", "Thanks! Your order is being set up.", "ok", cookies);
+    if (invoice.free_month) {
+      try {
+        return redirect(await checkoutForFreeMonth(c.env, c.s, client, invoice, await renewalNote(c, invoice)), null, "ok", cookies);
+      } catch (e) {
+        console.error("free month checkout failed", e?.message || e);
+        return redirect(`/invoices/${invoice.id}`, "Order placed. Add a card below to start your free month.", "ok", cookies);
+      }
+    }
     if (c.s.stripe_secret_key) {
       try {
         const url = await checkoutForInvoice(c.env, c.s, client, invoice, { saveCard: c.form.get("save_card") === "1" });
@@ -494,6 +534,12 @@ export default function (r) {
   });
 }
 
+// The line under Stripe's button when saving a card for the free month.
+async function renewalNote(c, inv) {
+  const svc = await one(c.env, "SELECT s.price FROM invoice_items it JOIN services s ON s.id = it.service_id WHERE it.invoice_id = ? AND it.kind = 'service' LIMIT 1", inv.id);
+  return `Nothing is charged today. Your card will be charged ${money(svc?.price || 0)} on ${fmtDate(addMonths(inv.issued, 1))}, then monthly, unless you cancel before then.`;
+}
+
 // Shared by the client and admin invoice pages; printable.
 export function invoicePage(c, inv, items, admin, extra = "") {
   const s = c.s;
@@ -505,7 +551,11 @@ export function invoicePage(c, inv, items, admin, extra = "") {
     <a class="btn btn-sm" href="${admin ? `/admin/invoices` : "/invoices"}">← Invoices</a>
     <button class="btn btn-sm" data-print>${icon("print")} Print or save PDF</button>
   </div>
-  ${!admin && unpaid ? html`<section class="card pay-box no-print">
+  ${!admin && unpaid && inv.free_month && owed <= 0 ? html`<section class="card pay-box no-print">
+    <div><h3>Your first month is free</h3><p class="muted">Add a card to start it. Nothing is charged today. The first payment is on ${fmtDate(addMonths(inv.issued, 1))}, and you can cancel any time before then.</p></div>
+    <div class="pay-actions">${s.stripe_secret_key ? html`<form method="post" action="/invoices/${inv.id}/pay">${csrf(c)}<button class="btn btn-primary">${icon("card")} Add a card and start</button></form>` : ""}</div>
+  </section>` : ""}
+  ${!admin && unpaid && !(inv.free_month && owed <= 0) ? html`<section class="card pay-box no-print">
     <div><h3>${money(owed)} to pay</h3><p class="muted">Due ${fmtDate(inv.due)}${inv.charge_error ? html` · last card payment failed: ${inv.charge_error}` : ""}</p></div>
     <div class="pay-actions">
       ${c.client.credit > 0 ? html`<form method="post" action="/invoices/${inv.id}/credit">${csrf(c)}<button class="btn">Use ${money(Math.min(c.client.credit, owed))} credit</button></form>` : ""}
