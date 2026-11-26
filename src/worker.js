@@ -33,6 +33,9 @@ export default {
     try {
       await migrate(env);
       c.s = await loadSettings(env);
+      // Where this request came in (clientarea.ratlan.net, a brand's own address...),
+      // so Stripe sends people back to the same place.
+      c.s.origin = url.origin;
       res = await resolveBrand(c);
       const m = res ? null : router.match(req.method, url.pathname);
       if (res) {

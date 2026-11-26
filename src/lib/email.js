@@ -3,7 +3,7 @@
 import { insert } from "./db.js";
 import { esc } from "./html.js";
 import { nowIso } from "./util.js";
-import { settingsForClient } from "./brands.js";
+import { rehost, settingsForClient } from "./brands.js";
 
 const oneLine = (s) => String(s ?? "").replace(/[\r\n]+/g, " ").trim();
 const isAscii = (s) => /^[\x20-\x7e]*$/.test(s);
@@ -78,6 +78,25 @@ export async function sendEmail(env, s, msg) {
   if (s._base && s.company_name !== s._base.company_name) {
     const swap = (t) => String(t).split(s._base.company_name).join(s.company_name);
     msg = { ...msg, subject: swap(msg.subject), lines: msg.lines.map((l) => (typeof l === "string" ? swap(l) : l)) };
+  }
+  // Links into the client area and control panel use the brand's own addresses.
+  if (s.client_url || s.panel_url) {
+    const ca = (env.PUBLIC_URL || "").replace(/\/+$/, "");
+    const panel = (s._base?.berth_url || "").replace(/\/+$/, "");
+    const fix = (t) => {
+      let v = String(t);
+      if (s.client_url && ca) v = v.split(ca).join(s.client_url);
+      if (s.panel_url && panel) v = v.replace(new RegExp(panel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?=[/?#]|$)", "g"), s.panel_url);
+      return v;
+    };
+    msg = {
+      ...msg,
+      lines: msg.lines.map((l) =>
+        typeof l === "string" ? fix(l)
+        : l.button ? { button: { ...l.button, url: fix(l.button.url) } }
+        : l.rows ? { rows: l.rows.map(([k, v]) => [k, fix(v)]) }
+        : l),
+    };
   }
   const from = env.FROM_EMAIL || "no-reply@mail-service.ratlan.net";
   const fromName = s.mail_from_name || s.company_name;

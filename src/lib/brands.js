@@ -3,6 +3,8 @@
 // header and footer, and email look; billing, Stripe and Berth stay shared.
 //
 // Which brand a visitor sees, strongest first:
+//   0. the address itself, when it's a brand's own client area host
+//      (clientarea.purehost.co.uk),
 //   1. a signed-in client's own brand (clients.brand, set when they sign up),
 //   2. ?brand=<slug> on any link (remembered in a cookie for a year),
 //   3. the brand cookie,
@@ -30,7 +32,21 @@ export function applyBrand(s, brand) {
   out.brand_css = brand.stylesheet || "";
   out.theme_color = brand.theme_color || "";
   out.email_mark = brand.email_mark || "";
+  // The brand's own client area and control panel addresses, if it has them.
+  out.client_url = brand.host ? `https://${brand.host}` : "";
+  out.panel_url = (brand.panel_url || "").replace(/\/+$/, "");
   return out;
+}
+
+// Moves a URL onto another origin (same path and query). Bad input is returned as is.
+export function rehost(u, origin) {
+  if (!origin || !u) return u;
+  try {
+    const x = new URL(u);
+    return origin + x.pathname + x.search + x.hash;
+  } catch {
+    return u;
+  }
 }
 
 const hostOf = (u) => {
@@ -51,6 +67,18 @@ export async function resolveBrand(c) {
   const brands = (await listBrands(c.env)).filter((b) => b.active);
   c.brands = brands;
   if (p.startsWith("/admin")) return null;
+  // A brand's own address decides by itself.
+  const byHost = brands.find((x) => x.host && x.host === c.url.hostname);
+  if (byHost) {
+    c.hostBrand = true;
+    c.s = applyBrand(c.s, byHost);
+    if (c.url.searchParams.has("brand") && c.req.method === "GET") {
+      const u = new URL(c.url);
+      u.searchParams.delete("brand");
+      return new Response(null, { status: 302, headers: { Location: u.pathname + u.search, "cache-control": "no-store" } });
+    }
+    return null;
+  }
   const param = c.url.searchParams.get("brand");
   if (param !== null) {
     const b = brands.find((x) => x.slug === param.toLowerCase());
@@ -80,7 +108,7 @@ export async function resolveBrand(c) {
 
 // A signed-in client always sees their own brand.
 export function brandForClient(c, client) {
-  if (!c.brands) return;
+  if (!c.brands || c.hostBrand) return;
   const b = client.brand ? c.brands.find((x) => x.slug === client.brand) : null;
   if ((b?.slug || null) !== (c.s.brand || null)) c.s = applyBrand(c.s, b);
 }

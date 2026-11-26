@@ -477,8 +477,8 @@ export async function checkoutForInvoice(env, s, client, inv, { saveCard }) {
       setup_future_usage: saveCard ? "off_session" : undefined,
     },
     metadata: { purser_invoice: inv.id, purser_client: client.id, save_card: saveCard ? "1" : "0" },
-    success_url: `${baseUrl(env)}/invoices/${inv.id}?checkout={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${baseUrl(env)}/invoices/${inv.id}`,
+    success_url: `${s.origin || baseUrl(env)}/invoices/${inv.id}?checkout={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${s.origin || baseUrl(env)}/invoices/${inv.id}`,
   });
   return session.url;
 }
@@ -491,8 +491,8 @@ export async function checkoutForCard(env, s, client) {
     currency: s.currency.toLowerCase(),
     payment_method_types: ["card"],
     metadata: { purser_client: client.id, purpose: "save_card" },
-    success_url: `${baseUrl(env)}/account/payment?checkout={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${baseUrl(env)}/account/payment`,
+    success_url: `${s.origin || baseUrl(env)}/account/payment?checkout={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${s.origin || baseUrl(env)}/account/payment`,
   });
   return session.url;
 }

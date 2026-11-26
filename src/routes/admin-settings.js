@@ -92,6 +92,7 @@ export default function (r) {
         <div class="grid3">${field({ label: "Name", name: "name", value: b.name, required: true })}${field({ label: "Link code", name: "slug", value: b.slug, required: true, hint: b.slug ? html`Links use <code>?brand=${b.slug}</code>` : "Lower case, e.g. purehost." })}${field({ label: "Button colour", name: "brand_color", type: "color", value: b.brand_color || s.brand_color })}</div>
         <div class="grid2">${field({ label: "Website", name: "site_url", type: "url", value: b.site_url, required: true, hint: "Visitors coming from here get this brand too." })}${field({ label: "Logo", name: "logo_url", value: b.logo_url, optional: true })}
         ${field({ label: "Favicon (SVG)", name: "icon_url", value: b.icon_url, optional: true, hint: "favicon-32.png and apple-touch-icon.png sit next to it." })}${field({ label: "Extra stylesheet", name: "stylesheet", value: b.stylesheet, optional: true, hint: "Loaded after the main styles; sets fonts and colours." })}
+        ${field({ label: "Own client area address", name: "host", value: b.host, optional: true, placeholder: "clientarea.example.com", hint: "A hostname routed to this Worker. Visits there always get this brand." })}${field({ label: "Control panel address", name: "panel_url", value: b.panel_url, optional: true, placeholder: "https://controlpanel.example.com", hint: "Berth's address for this brand's customers." })}
         ${field({ label: "Get started link", name: "plans_url", value: b.plans_url, optional: true })}${field({ label: "Terms link", name: "terms_url", value: b.terms_url, optional: true })}
         ${field({ label: "Email sender name", name: "mail_from_name", value: b.mail_from_name, optional: true })}${field({ label: "Email logo (PNG)", name: "email_mark", value: b.email_mark, optional: true })}
         ${field({ label: "Website menu", name: "site_links", type: "textarea", rows: 5, value: b.site_links, optional: true, hint: "One Label|URL per line." })}${field({ label: "Footer links", name: "footer_links", type: "textarea", rows: 5, value: b.footer_links, optional: true })}</div>
@@ -177,9 +178,13 @@ export default function (r) {
     const back = "/admin/settings?tab=brands";
     const old = clean(f.get("old_slug"), 40);
     const o = { slug: clean(f.get("slug"), 40).toLowerCase(), name: clean(f.get("name"), 80), active: f.get("active") === "1" ? 1 : 0 };
-    for (const k of ["site_url", "logo_url", "icon_url", "stylesheet", "brand_color", "plans_url", "terms_url", "mail_from_name", "email_mark"]) o[k] = clean(f.get(k), 500);
+    for (const k of ["host", "panel_url", "site_url", "logo_url", "icon_url", "stylesheet", "brand_color", "plans_url", "terms_url", "mail_from_name", "email_mark"]) o[k] = clean(f.get(k), 500);
     for (const k of ["site_links", "footer_links"]) o[k] = clean(f.get(k), 4000);
     o.site_url = o.site_url.replace(/\/+$/, "");
+    o.host = o.host.toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    o.panel_url = o.panel_url.replace(/\/+$/, "");
+    if (o.host && !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(o.host)) return redirect(back, "The client area address should be a hostname like clientarea.example.com.", "err");
+    if (o.panel_url && !/^https?:\/\//.test(o.panel_url)) return redirect(back, "The control panel address should start with https://", "err");
     if (!/^[a-z0-9-]{2,40}$/.test(o.slug)) return redirect(back, "The link code can only use a-z, 0-9 and dashes.", "err");
     if (!o.name || !/^https?:\/\//.test(o.site_url)) return redirect(back, "A brand needs a name and a website address starting with https://", "err");
     if (!/^#[0-9a-f]{6}$/i.test(o.brand_color)) o.brand_color = "";
