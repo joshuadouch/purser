@@ -6,6 +6,7 @@ import {
   SYSTEM, baseUrl, cancelInvoice, chargeSavedCard, createInvoice, getClient, getInvoice, getService, log, notifyAdmin,
   suspendService, terminateService,
 } from "./billing.js";
+import { pruneAnalytics } from "./analytics.js";
 import { addDays, cycleEnd, daysBetween, fmtDate, money, nowIso, today } from "./util.js";
 
 export async function runDaily(env, s, ctx, day = today()) {
@@ -26,6 +27,7 @@ export async function runDaily(env, s, ctx, day = today()) {
   await step("terminations", () => overdueTerminations(env, s, day));
   await step("tickets", () => autoCloseTickets(env, s));
   await step("cleanup", () => cleanup(env));
+  await step("analytics", () => pruneAnalytics(env));
   return report;
 }
 

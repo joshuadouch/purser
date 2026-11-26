@@ -323,6 +323,39 @@ export const MIGRATIONS = [
       `UPDATE brands SET host = 'clientarea.purehost.co.uk', panel_url = 'https://controlpanel.purehost.co.uk' WHERE slug = 'purehost'`,
     ],
   },
+  {
+    id: 8,
+    name: "visit tracking",
+    sql: [
+      `CREATE TABLE visits (
+        id TEXT PRIMARY KEY,
+        brand TEXT NOT NULL DEFAULT '',
+        first_at TEXT NOT NULL,
+        last_at TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT '(direct)',
+        medium TEXT NOT NULL DEFAULT '(none)',
+        campaign TEXT NOT NULL DEFAULT '',
+        referrer TEXT NOT NULL DEFAULT '',
+        landing TEXT NOT NULL DEFAULT '/',
+        country TEXT NOT NULL DEFAULT '',
+        device TEXT NOT NULL DEFAULT '',
+        pages INTEGER NOT NULL DEFAULT 0,
+        reached_ca INTEGER NOT NULL DEFAULT 0,
+        client_id INTEGER,
+        signup_at TEXT,
+        order_at TEXT,
+        orders INTEGER NOT NULL DEFAULT 0,
+        paid_at TEXT,
+        paid_orders INTEGER NOT NULL DEFAULT 0,
+        revenue INTEGER NOT NULL DEFAULT 0,
+        mrr INTEGER NOT NULL DEFAULT 0
+      )`,
+      `CREATE INDEX visits_first ON visits (first_at)`,
+      `CREATE TABLE page_views (day TEXT NOT NULL, brand TEXT NOT NULL DEFAULT '', path TEXT NOT NULL, views INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, brand, path))`,
+      `ALTER TABLE clients ADD COLUMN visit_id TEXT`,
+      `ALTER TABLE services ADD COLUMN visit_id TEXT`,
+    ],
+  },
 ];
 
 let applied = null;
