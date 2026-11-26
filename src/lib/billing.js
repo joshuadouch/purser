@@ -1,5 +1,6 @@
 // Billing engine: invoices, payments, credit, service lifecycle and the
 // Berth provisioning that follows payment.
+import { visitOrdered, visitPaid } from "./analytics.js";
 import { all, batch, insert, one, run, stmt, update } from "./db.js";
 import { sendEmail } from "./email.js";
 import { nextInvoiceNumber } from "./settings.js";
@@ -189,6 +190,7 @@ async function onInvoicePaid(env, s, inv, ctx) {
     const svc = await getService(env, it.service_id);
     if (!svc) continue;
     if (svc.status === "pending") {
+      await visitPaid(env, svc, inv.total);
       await activateService(env, s, svc, it, ctx);
     } else if (svc.next_due && it.period_start === svc.next_due && it.period_end) {
       await update(env, "services", svc.id, { next_due: it.period_end });
@@ -679,7 +681,7 @@ export const productCycles = (p) => Object.keys(CYCLES).filter((c) => productPri
 // promo: a row from promo_codes, already checked with checkPromo.
 // freeMonth: "monthly" (first month £0, card saved first) or "annually" (13
 // months for the price of 12), already checked with freeMonthBlock.
-export async function placeOrder(env, s, client, product, { cycle, label, actor, ctx, invoice = true, promo = null, freeMonth = null }) {
+export async function placeOrder(env, s, client, product, { cycle, label, actor, ctx, invoice = true, promo = null, freeMonth = null, visitId = null }) {
   const price = productPrice(product, cycle);
   if (price === null) throw new Error("That billing cycle isn't offered for this product");
   // A recurring code lowers the price the service renews at, too.
@@ -688,6 +690,8 @@ export async function placeOrder(env, s, client, product, { cycle, label, actor,
     env, "INSERT INTO services (client_id, product_id, label, cycle, price, status, promo_code, created_at) VALUES (?,?,?,?,?,?,?,?)",
     client.id, product.id, label || "", cycle, renewPrice, "pending", promo?.code || "", nowIso(),
   );
+  // Tie the order to the website visit it came from, before the invoice can be paid.
+  if (visitId) await visitOrdered(env, visitId, client, sid);
   await log(env, actor, client.id, "order.placed", `${product.name}${label ? ` (${label})` : ""}, ${CYCLES[cycle].label.toLowerCase()} at ${money(renewPrice)}${promo ? ` with code ${promo.code}` : ""}`);
   if (!invoice) return { serviceId: sid };
   const start = today();

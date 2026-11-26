@@ -384,7 +384,7 @@ export default function (r) {
     }
     const block = promo ? "code" : await freeMonthBlock(c.env, c.s, { product: p, cycle, client, label });
     const freeMonth = block ? null : cycle;
-    const { invoice } = await placeOrder(c.env, c.s, client, p, { cycle, label, actor, ctx: c.ctx, promo, freeMonth });
+    const { invoice } = await placeOrder(c.env, c.s, client, p, { cycle, label, actor, ctx: c.ctx, promo, freeMonth, visitId: c.visitId || client.visit_id || null });
     if (invoice.status === "paid") return redirect("/services", "Thanks! Your order is being set up.", "ok", cookies);
     if (invoice.free_month) {
       try {
