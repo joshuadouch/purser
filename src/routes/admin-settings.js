@@ -42,6 +42,10 @@ export default function (r) {
           ${field({ label: "Retry failed card payments every", name: "auto_charge_retry_days", type: "number", value: s.auto_charge_retry_days, hint: "Days. Tried 3 times at most." })}
         </div>
         ${field({ type: "checkbox", name: "auto_apply_credit", value: s.auto_apply_credit, label: "Use a client's credit on new invoices automatically" })}
+        <fieldset><legend>First month free</legend>
+          ${field({ type: "checkbox", name: "free_month", value: s.free_month, label: "New customers get their first month free on hosting plans", hint: "Monthly: nothing to pay today, but they must save a card (charged a month later). Needs Stripe. One per client, email, website domain and card; prepaid cards and discount codes don't get it." })}
+          ${field({ type: "checkbox", name: "free_month_annual", value: s.free_month_annual, label: "Yearly orders get a free 13th month", hint: "Paid up front, so no card check is needed." })}
+        </fieldset>
         <fieldset><legend>Tax</legend><div class="grid3">
           ${field({ type: "checkbox", name: "tax_enabled", value: s.tax_enabled, label: "Charge tax" })}
           ${field({ label: "Name", name: "tax_label", value: s.tax_label })}
@@ -149,7 +153,7 @@ export default function (r) {
     berth: ["berth_url", "berth_token", "berth_panel_name"],
     support: ["ticket_autoclose_days", "admin_notify_email"],
   };
-  const CHECKS = { general: ["allow_registration"], billing: ["auto_apply_credit", "tax_enabled"] };
+  const CHECKS = { general: ["allow_registration"], billing: ["auto_apply_credit", "tax_enabled", "free_month", "free_month_annual"] };
 
   r.post("/admin/settings", S, A, async (c) => {
     const tab = c.form.get("tab");

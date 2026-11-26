@@ -42,6 +42,8 @@ Set it up in Admin → Settings → Berth: the Berth address (must be reachable 
 
 **Discount codes** are under Billing → Discount codes. A code takes a percentage or a fixed amount off the first invoice, or off every renewal when "Keep the discount on every renewal" is ticked. It can be limited to some products or billing periods, a number of uses, an end date, and once per client. Customers enter it on the order page, and website links can fill it in with `/order/<plan>?code=CODE`. A code that brings the first invoice to £0 sets the service up straight away, with no card payment.
 
+**First month free** (Admin → Settings → Billing) is for new customers on hosting products. Monthly orders pay nothing today: the order invoice carries a "First month free" line, and the customer saves a card through Stripe Checkout in setup mode before anything is set up. The first charge is the normal renewal a month later, on that card. Yearly orders pay as usual and their first term runs 13 months (can be turned off separately). It's one per person: each free month is recorded with the client, a normalised email (case, `+tags` and Gmail dots ignored), the website domain and the card's Stripe fingerprint, and any match with one already used, a domain hosted here before, a prepaid card, an existing customer or a discount code means the normal price. A card that fails the check is still saved, and the invoice goes back to the full price for the customer to pay.
+
 Berth's suspension blocks the customer's panel sign-in; their sites keep running.
 
 ## Stripe
