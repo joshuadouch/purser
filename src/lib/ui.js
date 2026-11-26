@@ -2,7 +2,7 @@
 import { html, raw, esc } from "./html.js";
 import { CYCLES, fmtDate, initials, money, pounds } from "./util.js";
 
-export const ASSET_V = "10";
+export const ASSET_V = "11";
 
 const I = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
@@ -237,7 +237,7 @@ export function adminPage(c, { title, active, body, topActions }) {
     sub: st.role === "admin" ? "Administrator" : "Support",
     logout: "/admin/logout",
     groups: [
-      { title: "Overview", items: [{ id: "home", href: "/admin", icon: "home", label: "Dashboard" }] },
+      { title: "Overview", items: [{ id: "home", href: "/admin", icon: "home", label: "Dashboard" }, { id: "analytics", href: "/admin/analytics", icon: "activity", label: "Analytics" }] },
       {
         title: "Customers",
         items: [

@@ -11,6 +11,7 @@ import { sendEmail } from "../lib/email.js";
 import { baseUrl, log, SYSTEM } from "../lib/billing.js";
 import { clean, fullName, isEmail, nowIso } from "../lib/util.js";
 import { notifyStaff } from "./tickets.js";
+import { visitSignedUp } from "../lib/analytics.js";
 
 const KINDS = [
   ["wordpress", "WordPress"],
@@ -87,6 +88,8 @@ export default function (r) {
           email, first.slice(0, 80), rest.join(" ").slice(0, 80), nowIso(), c.s.brand || null, "Created by a free migration request.",
         );
         await log(c.env, SYSTEM, id, "client.created", `${email} (migration request)`);
+        // Counts as a sign-up in Analytics, so the website visit that led here is credited.
+        await visitSignedUp(c.env, c.visitId, id);
         client = await one(c.env, "SELECT * FROM clients WHERE id = ?", id);
         created = true;
       }
