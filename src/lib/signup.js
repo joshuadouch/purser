@@ -40,11 +40,11 @@ export async function signUp(c, f) {
   }
   const id = await insert(
     c.env,
-    `INSERT INTO clients (email, password_hash, first_name, last_name, company, address1, city, postcode, country, phone, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO clients (email, password_hash, first_name, last_name, company, address1, city, postcode, country, phone, created_at, brand)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     email, await hashPassword(f.get("password")), clean(f.get("first_name"), 80), clean(f.get("last_name"), 80), clean(f.get("company"), 120),
     clean(f.get("address1"), 200), clean(f.get("city"), 100), clean(f.get("postcode"), 20), clean(f.get("country"), 80) || "United Kingdom",
-    clean(f.get("phone"), 40), nowIso(),
+    clean(f.get("phone"), 40), nowIso(), c.s.brand || null,
   );
   await log(c.env, { kind: "client", id, name: email }, id, "client.registered", email);
   const t = await makeToken(c.env, "verify", id, 72);

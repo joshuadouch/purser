@@ -1,0 +1,46 @@
+/* PureHost look for the client area: loaded after style.css when a visitor or
+   client belongs to the PureHost brand. Tokens match the purehost repo's
+   brand/BRAND.md (Droplet blue #1E63FF, buttons #1650E0, navy #0A1A3F). */
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 600 800; font-display: swap; src: url(/brands/purehost/fonts/plus-jakarta-sans.woff2) format("woff2"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 400 700; font-display: swap; src: url(/brands/purehost/fonts/inter.woff2) format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url(/brands/purehost/fonts/ibm-plex-mono-500.woff2) format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 600 700; font-display: swap; src: url(/brands/purehost/fonts/ibm-plex-mono-600.woff2) format("woff2"); }
+
+:root {
+  --accent: #1650e0;
+  --ember: #1e63ff;
+  --side: #0a1a3f;
+  --side-2: #14295a;
+  --bg: #f7faff;
+  --sand: #eaf1fb;
+  --ink: #0a1a3f;
+  --muted: #4f5d78;
+  --line: #d8e2f1;
+  --soft: #eaf1ff;
+  --purple-bg: #eaf1ff;
+  --display: "Plus Jakarta Sans", "Inter", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --shadow: 0 1px 0 rgba(10, 26, 63, .04), 0 12px 32px -14px rgba(10, 26, 63, .16);
+}
+body { font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; }
+
+.nav-title, .eyebrow, .logo-tag { font-family: var(--mono); }
+.site-head { background: rgba(247, 250, 255, .9); }
+.skip, .hero, .step-title span { color: #fff; }
+.hero { background: radial-gradient(420px 220px at 100% 120%, rgba(92, 200, 255, .45), transparent), radial-gradient(360px 200px at 0% -20%, rgba(30, 99, 255, .55), transparent), var(--ink); }
+.acct-tabs a { color: #c9d5ee; }
+.acct-tabs a.on { background: #fff; color: var(--ink); }
+.acct-tabs .count, .nav-link .count { color: #fff; }
+.avatar { color: #fff; }
+
+a.stat:hover, .btn:hover { border-color: #b9c9e6; }
+.btn:hover { background: #f3f7ff; }
+.btn-primary:hover { background: #0f3db3; border-color: #0f3db3; }
+a.row:hover, .table tr[data-href]:hover td, input[type="file"] { background: #f3f7ff; }
+input, select, textarea, .money-in { border-color: #c9d6ea; }
+input:focus, select:focus, textarea:focus, .money-in:focus-within { outline-color: rgba(30, 99, 255, .22); }
+.notice { color: #0f3db3; border-color: #c6d8ff; }
+.pay-box { border-color: #c6d8ff; background: linear-gradient(180deg, #fff, #f1f6ff); }
+.auth { background: radial-gradient(900px 500px at 110% 110%, #dce8ff, transparent), var(--bg); }
+.auth-card { box-shadow: 0 12px 40px rgba(10, 26, 63, .08); }
+.site-foot { background: var(--sand); }

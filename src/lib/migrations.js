@@ -284,6 +284,36 @@ export const MIGRATIONS = [
     name: "mail services that share a hosting account",
     sql: [`ALTER TABLE services ADD COLUMN berth_addon INTEGER NOT NULL DEFAULT 0`],
   },
+  {
+    id: 6,
+    name: "brands (PureHost)",
+    sql: [
+      `CREATE TABLE brands (
+        slug TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        site_url TEXT NOT NULL DEFAULT '',
+        logo_url TEXT NOT NULL DEFAULT '',
+        icon_url TEXT NOT NULL DEFAULT '',
+        stylesheet TEXT NOT NULL DEFAULT '',
+        brand_color TEXT NOT NULL DEFAULT '',
+        theme_color TEXT NOT NULL DEFAULT '',
+        site_links TEXT NOT NULL DEFAULT '',
+        footer_links TEXT NOT NULL DEFAULT '',
+        plans_url TEXT NOT NULL DEFAULT '',
+        terms_url TEXT NOT NULL DEFAULT '',
+        mail_from_name TEXT NOT NULL DEFAULT '',
+        email_mark TEXT NOT NULL DEFAULT '',
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      )`,
+      `ALTER TABLE clients ADD COLUMN brand TEXT`,
+      `INSERT INTO brands (slug, name, site_url, logo_url, icon_url, stylesheet, brand_color, theme_color, site_links, footer_links, plans_url, terms_url, mail_from_name, email_mark, created_at)
+       VALUES ('purehost', 'PureHost', 'https://purehost.co.uk', '/brands/purehost/logo.svg', '/brands/purehost/favicon.svg', '/brands/purehost/theme.css', '#1650e0', '#f7faff',
+        'Web hosting|/web-hosting/' || char(10) || 'WordPress|/wordpress-hosting/' || char(10) || 'Email|/email-hosting/' || char(10) || 'Free transfer|/website-transfer/' || char(10) || 'Support|/support/',
+        'Terms|/legal/terms/' || char(10) || 'Privacy|/legal/privacy/' || char(10) || 'Acceptable use|/legal/acceptable-use/' || char(10) || 'Support|/support/',
+        '/web-hosting/#plans', 'https://purehost.co.uk/legal/terms/', 'PureHost', 'https://purehost.co.uk/brand/mark-512.png', '2026-11-26T00:00:00.000Z')`,
+    ],
+  },
 ];
 
 let applied = null;

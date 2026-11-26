@@ -12,6 +12,8 @@ export const DEFAULTS = {
   // Footer links, same format.
   footer_links: "Terms|/legal/terms/\nPrivacy|/legal/privacy/\nAcceptable use|/legal/acceptable-use/\nHelp|/contact/",
   logo_url: "/brand/logo.svg",
+  // Where "Get started" goes for signed-out visitors. Relative URLs are on site_url.
+  plans_url: "/hosting/#plans",
   company_address: "",
   company_email: "",
   company_vat: "",

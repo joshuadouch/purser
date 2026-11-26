@@ -2,7 +2,7 @@
 import { html, raw, esc } from "./html.js";
 import { CYCLES, fmtDate, initials, money, pounds } from "./util.js";
 
-export const ASSET_V = "9";
+export const ASSET_V = "10";
 
 const I = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
@@ -35,20 +35,28 @@ const I = {
 export const icon = (n, cls = "") =>
   raw(`<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n] || ""}</svg>`);
 
+// Local paths get the asset version so a deploy busts browser caches.
+const versioned = (u) => (u.startsWith("/") ? `${u}?v=${ASSET_V}` : u);
+// A brand's favicon, or the house one. A brand keeps its PNG icons next to
+// its SVG (favicon-32.png, apple-touch-icon.png).
+export const favicon = (c) => versioned(c.s.brand_icon || "/favicon.svg");
+const iconDir = (c) => (c.s.brand_icon?.startsWith("/") ? c.s.brand_icon.replace(/\/[^/]*$/, "") : "");
+
 const head = (c, title) => html`<!doctype html>
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title} · ${c.s.company_name}</title>
-<meta name="theme-color" content="#fff8f2">
-<link rel="icon" href="/favicon.svg?v=${ASSET_V}" type="image/svg+xml">
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=${ASSET_V}">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${ASSET_V}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<meta name="theme-color" content="${c.s.theme_color || "#fff8f2"}">
+<link rel="icon" href="${favicon(c)}" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="32x32" href="${iconDir(c)}/favicon-32.png?v=${ASSET_V}">
+<link rel="apple-touch-icon" href="${iconDir(c)}/apple-touch-icon.png?v=${ASSET_V}">
+${c.s.brand_css ? "" : raw(`<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">`)}
 <link rel="stylesheet" href="/style.css?v=${ASSET_V}">
+${c.s.brand_css ? html`<link rel="stylesheet" href="${versioned(c.s.brand_css)}">` : ""}
 ${c.s.brand_color && /^#[0-9a-f]{6}$/i.test(c.s.brand_color) ? raw(`<style>:root{--accent:${c.s.brand_color}}</style>`) : ""}
 <script src="/app.js?v=${ASSET_V}" defer></script>
 </head>`;
@@ -67,7 +75,7 @@ function nav(items, active) {
 }
 
 function shell(c, { title, active, body, groups, home, who, sub, logout, banner, topActions, kicker }) {
-  const brand = html`<a class="brand" href="${home}"><span class="brand-stack"><span class="brand-row"><span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span><span>${c.s.company_name}</span></span><span class="logo-tag">Client Area</span></span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
+  const brand = html`<a class="brand" href="${home}"><span class="brand-stack"><span class="brand-row"><span class="brand-mark"><img src="${favicon(c)}" alt=""></span><span>${c.s.company_name}</span></span><span class="logo-tag">Client Area</span></span>${kicker ? html`<em>${kicker}</em>` : ""}</a>`;
   return new Response(
     String(html`${head(c, title)}
 <body class="app">
@@ -109,7 +117,7 @@ const linkLines = (s, v) =>
 function logo(c) {
   return c.s.logo_url
     ? html`<img src="${c.s.logo_url.startsWith("/") ? `${c.s.logo_url}?v=${ASSET_V}` : c.s.logo_url}" alt="${c.s.company_name}" height="38">`
-    : html`<span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span><b>${c.s.company_name}</b>`;
+    : html`<span class="brand-mark"><img src="${favicon(c)}" alt=""></span><b>${c.s.company_name}</b>`;
 }
 
 function siteHeader(c, { signedIn }) {
@@ -121,7 +129,7 @@ function siteHeader(c, { signedIn }) {
     <nav class="site-nav" aria-label="Website">${links.map((l) => html`<a href="${l.href}">${l.label}</a>`)}</nav>
     <div class="head-cta">${signedIn
       ? html`<a class="btn btn-sm${c.url.pathname === "/" ? " btn-primary" : ""}" href="/">${icon("user")}<span>Your account</span></a><form method="post" action="/logout" class="inline">${csrf(c)}<button class="icon-btn" title="Sign out" aria-label="Sign out">${icon("logout")}</button></form>`
-      : html`<a class="login" href="/login">Log in</a><a class="btn btn-primary btn-sm" href="${siteHref(c.s, "/hosting/#plans")}">Get started</a>`}</div>
+      : html`<a class="login" href="/login">Log in</a><a class="btn btn-primary btn-sm" href="${siteHref(c.s, c.s.plans_url || "/hosting/#plans")}">Get started</a>`}</div>
     <button class="icon-btn site-menu-btn" aria-label="Menu" aria-expanded="false" data-site-menu>${icon("menu")}</button>
   </div>
 </header>`;
@@ -276,7 +284,7 @@ export function authPage(c, { title, body, wide }) {
     String(html`${head(c, title)}
 <body class="auth">
 <div class="auth-wrap${wide ? " wide" : ""}">
-  <div class="auth-brand"><span class="brand-mark"><img src="/favicon.svg?v=${ASSET_V}" alt=""></span>${c.s.company_name}</div>
+  <div class="auth-brand"><span class="brand-mark"><img src="${favicon(c)}" alt=""></span>${c.s.company_name}</div>
   <div class="auth-card">
     <h1>${title}</h1>
     ${flashBox(c)}
