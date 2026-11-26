@@ -4,6 +4,7 @@ import { readSession, getCookie } from "./auth.js";
 import { one, run } from "./db.js";
 import { authPage } from "./ui.js";
 import { nowIso } from "./util.js";
+import { brandForClient } from "./brands.js";
 
 export class Router {
   constructor() {
@@ -105,6 +106,7 @@ export async function requireClient(c, known) {
   if (!client || client.status === "closed") return redirect("/login", "That account is closed.", "err");
   c.session = sess;
   c.client = client;
+  brandForClient(c, client);
   c.actor = sess.staff_id
     ? { kind: "staff", id: sess.staff_id, name: `staff #${sess.staff_id} as client` }
     : { kind: "client", id: client.id, name: client.email };

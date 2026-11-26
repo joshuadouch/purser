@@ -1,6 +1,7 @@
 // Purser: billing, support tickets and the client area, on Cloudflare Workers.
 import { migrate } from "./lib/migrations.js";
 import { loadSettings } from "./lib/settings.js";
+import { resolveBrand } from "./lib/brands.js";
 import { FLASH, Router, notFound, parseForm, readFlash, sameOrigin, forbidden, withStatus } from "./lib/http.js";
 import { authPage } from "./lib/ui.js";
 import { html } from "./lib/html.js";
@@ -32,8 +33,11 @@ export default {
     try {
       await migrate(env);
       c.s = await loadSettings(env);
-      const m = router.match(req.method, url.pathname);
-      if (!m) res = notFound(c);
+      res = await resolveBrand(c);
+      const m = res ? null : router.match(req.method, url.pathname);
+      if (res) {
+        // ?brand= link: cookie set, redirected to the clean address.
+      } else if (!m) res = notFound(c);
       else if (m.methodNotAllowed) res = new Response("Method not allowed", { status: 405 });
       else {
         c.params = m.params;
@@ -59,6 +63,7 @@ export default {
       );
     }
     const out = new Response(res.body, res);
+    if (c.setBrandCookie) out.headers.append("Set-Cookie", c.setBrandCookie);
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) if (!out.headers.has(k)) out.headers.set(k, v);
     // A flash message is shown once: clear it unless this response sets a new one.
     if (c.flash && !(out.headers.get("set-cookie") || "").includes(`${FLASH}=`)) {

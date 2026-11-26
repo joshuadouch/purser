@@ -11,7 +11,7 @@ import { sendEmail } from "../lib/email.js";
 import { sendStaffLink } from "./public.js";
 import { ago, clean, int, isEmail, nowIso } from "../lib/util.js";
 
-const TABS = [["general", "Company"], ["billing", "Billing"], ["payments", "Stripe"], ["berth", "Berth"], ["support", "Support"], ["staff", "Staff"]];
+const TABS = [["general", "Company"], ["brands", "Brands"], ["billing", "Billing"], ["payments", "Stripe"], ["berth", "Berth"], ["support", "Support"], ["staff", "Staff"]];
 
 const secretField = (c, name, label, hint) =>
   field({
@@ -86,6 +86,19 @@ export default function (r) {
           <div class="btn-row">${field({ type: "checkbox", name: "visible", value: d.visible, label: "Clients can pick it" })}<button class="btn btn-sm">Save</button>${d.n ? "" : html`<button class="btn btn-sm btn-danger-ghost" name="delete" value="1">Delete</button>`}</div></form>`)}
         <form method="post" action="/admin/settings/departments" class="dept">${csrf(c)}<div class="grid3">${field({ label: "New department", name: "name", placeholder: "Name" })}${field({ label: "Email", name: "email", type: "email", optional: true })}<div class="field"><label>&nbsp;</label><button class="btn btn-sm">Add</button></div></div><input type="hidden" name="visible" value="1"></form>
       </section>`;
+    } else if (tab === "brands") {
+      const brands = await all(c.env, "SELECT b.*, (SELECT COUNT(*) FROM clients WHERE brand = b.slug) AS n FROM brands b ORDER BY name");
+      const brandForm = (b = {}) => html`<form method="post" action="/admin/settings/brands" class="stack">${csrf(c)}<input type="hidden" name="old_slug" value="${b.slug || ""}">
+        <div class="grid3">${field({ label: "Name", name: "name", value: b.name, required: true })}${field({ label: "Link code", name: "slug", value: b.slug, required: true, hint: b.slug ? html`Links use <code>?brand=${b.slug}</code>` : "Lower case, e.g. purehost." })}${field({ label: "Button colour", name: "brand_color", type: "color", value: b.brand_color || s.brand_color })}</div>
+        <div class="grid2">${field({ label: "Website", name: "site_url", type: "url", value: b.site_url, required: true, hint: "Visitors coming from here get this brand too." })}${field({ label: "Logo", name: "logo_url", value: b.logo_url, optional: true })}
+        ${field({ label: "Favicon (SVG)", name: "icon_url", value: b.icon_url, optional: true, hint: "favicon-32.png and apple-touch-icon.png sit next to it." })}${field({ label: "Extra stylesheet", name: "stylesheet", value: b.stylesheet, optional: true, hint: "Loaded after the main styles; sets fonts and colours." })}
+        ${field({ label: "Get started link", name: "plans_url", value: b.plans_url, optional: true })}${field({ label: "Terms link", name: "terms_url", value: b.terms_url, optional: true })}
+        ${field({ label: "Email sender name", name: "mail_from_name", value: b.mail_from_name, optional: true })}${field({ label: "Email logo (PNG)", name: "email_mark", value: b.email_mark, optional: true })}
+        ${field({ label: "Website menu", name: "site_links", type: "textarea", rows: 5, value: b.site_links, optional: true, hint: "One Label|URL per line." })}${field({ label: "Footer links", name: "footer_links", type: "textarea", rows: 5, value: b.footer_links, optional: true })}</div>
+        <div class="btn-row">${field({ type: "checkbox", name: "active", value: b.slug ? b.active : 1, label: "Active" })}<button class="btn btn-primary btn-sm">${b.slug ? "Save" : "Add brand"}</button>${b.slug ? html`<small class="muted">${b.n} client${b.n === 1 ? "" : "s"}</small>` : ""}</div></form>`;
+      body = html`<section class="card narrow"><p class="muted">A brand is another shop front for this client area. Its customers see its name, logo, colours and website links here and in their emails. Billing, Stripe and Berth are shared. Link to the client area with <code>?brand=code</code> on the address; new clients keep the brand they signed up under.</p></section>
+        ${brands.map((b) => html`<section class="card narrow"><div class="card-head"><h3>${b.name}</h3>${b.active ? badge("active", "Active") : badge("cancelled", "Off")}</div>${brandForm(b)}</section>`)}
+        <section class="card narrow"><div class="card-head"><h3>New brand</h3></div>${brandForm()}</section>`;
     } else if (tab === "staff") {
       const staff = await all(c.env, "SELECT * FROM staff ORDER BY id");
       body = html`<section class="card narrow"><div class="card-head"><h3>Staff</h3></div>
@@ -157,6 +170,31 @@ export default function (r) {
     await saveSettings(c.env, values);
     await log(c.env, c.actor, null, "settings.saved", tab);
     return redirect(`/admin/settings?tab=${tab}`, "Settings saved.");
+  });
+
+  r.post("/admin/settings/brands", S, A, async (c) => {
+    const f = c.form;
+    const back = "/admin/settings?tab=brands";
+    const old = clean(f.get("old_slug"), 40);
+    const o = { slug: clean(f.get("slug"), 40).toLowerCase(), name: clean(f.get("name"), 80), active: f.get("active") === "1" ? 1 : 0 };
+    for (const k of ["site_url", "logo_url", "icon_url", "stylesheet", "brand_color", "plans_url", "terms_url", "mail_from_name", "email_mark"]) o[k] = clean(f.get(k), 500);
+    for (const k of ["site_links", "footer_links"]) o[k] = clean(f.get(k), 4000);
+    o.site_url = o.site_url.replace(/\/+$/, "");
+    if (!/^[a-z0-9-]{2,40}$/.test(o.slug)) return redirect(back, "The link code can only use a-z, 0-9 and dashes.", "err");
+    if (!o.name || !/^https?:\/\//.test(o.site_url)) return redirect(back, "A brand needs a name and a website address starting with https://", "err");
+    if (!/^#[0-9a-f]{6}$/i.test(o.brand_color)) o.brand_color = "";
+    if (o.slug !== old && (await one(c.env, "SELECT slug FROM brands WHERE slug = ?", o.slug))) return redirect(back, "Another brand uses that link code.", "err");
+    const cols = Object.keys(o);
+    if (old) {
+      await c.env.DB.batch([
+        c.env.DB.prepare(`UPDATE brands SET ${cols.map((k) => `${k} = ?`).join(", ")} WHERE slug = ?`).bind(...cols.map((k) => o[k]), old),
+        c.env.DB.prepare("UPDATE clients SET brand = ? WHERE brand = ?").bind(o.slug, old),
+      ]);
+    } else {
+      await run(c.env, `INSERT INTO brands (${cols.join(", ")}, created_at) VALUES (${cols.map(() => "?").join(", ")}, ?)`, ...cols.map((k) => o[k]), nowIso());
+    }
+    await log(c.env, c.actor, null, "settings.brand", o.slug);
+    return redirect(back, "Brand saved.");
   });
 
   r.post("/admin/settings/stripe-webhook", S, A, async (c) => {

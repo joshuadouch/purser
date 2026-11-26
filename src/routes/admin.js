@@ -104,6 +104,7 @@ export default function (r) {
     ${field({ label: "Phone", name: "phone", value: x.phone, optional: true })}
     ${field({ label: "VAT number", name: "vat_number", value: x.vat_number, optional: true })}
     <div class="wide">${field({ label: "Private notes", name: "notes", type: "textarea", rows: 3, value: x.notes, optional: true, hint: "Only staff see these." })}</div>
+    ${c.brands?.length ? field({ label: "Brand", name: "brand", type: "select", value: x.brand || "", wide: true, options: [["", c.s.company_name], ...c.brands.map((b) => [b.slug, b.name])], hint: "Which shop front they see in the client area and emails." }) : ""}
     ${field({ type: "checkbox", name: "tax_exempt", value: x.tax_exempt, label: "Don't charge tax" })}
     ${field({ type: "checkbox", name: "auto_charge", value: x.auto_charge ?? 1, label: "Charge saved card automatically" })}`;
 
@@ -113,6 +114,7 @@ export default function (r) {
     o.notes = clean(f.get("notes"), 5000);
     o.tax_exempt = f.get("tax_exempt") === "1" ? 1 : 0;
     o.auto_charge = f.get("auto_charge") === "1" ? 1 : 0;
+    if (f.has("brand")) o.brand = clean(f.get("brand"), 40) || null;
     return o;
   };
 
@@ -179,7 +181,7 @@ export default function (r) {
         <section class="card"><div class="card-head"><h3>${x.company || fullName(x)}</h3>${badge(x.status)}</div>
           <dl class="dl dl-tight"><dt>Email</dt><dd>${x.email} ${x.email_verified ? "" : html`<small class="muted">(unconfirmed)</small>`}</dd>${x.phone ? html`<dt>Phone</dt><dd>${x.phone}</dd>` : ""}
           <dt>Owes</dt><dd>${money(owed)}</dd><dt>Credit</dt><dd>${money(x.credit)}</dd><dt>Card</dt><dd>${x.stripe_pm_label || "none"}${x.stripe_pm && !x.auto_charge ? " (not auto-charged)" : ""}</dd>
-          <dt>Last sign-in</dt><dd>${x.last_login ? ago(x.last_login) : "never"}</dd><dt>Client since</dt><dd>${fmtDate(x.created_at)}</dd></dl>
+          ${x.brand ? html`<dt>Brand</dt><dd>${c.brands?.find((b) => b.slug === x.brand)?.name || x.brand}</dd>` : ""}<dt>Last sign-in</dt><dd>${x.last_login ? ago(x.last_login) : "never"}</dd><dt>Client since</dt><dd>${fmtDate(x.created_at)}</dd></dl>
           ${x.notes ? html`<div class="note">${textBlock(x.notes)}</div>` : ""}
         </section>
         <section class="card"><div class="actions-col">

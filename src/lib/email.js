@@ -3,6 +3,7 @@
 import { insert } from "./db.js";
 import { esc } from "./html.js";
 import { nowIso } from "./util.js";
+import { settingsForClient } from "./brands.js";
 
 const oneLine = (s) => String(s ?? "").replace(/[\r\n]+/g, " ").trim();
 const isAscii = (s) => /^[\x20-\x7e]*$/.test(s);
@@ -72,6 +73,12 @@ export function buildMime({ from, fromName, to, replyTo, subject, text, html }) 
 
 // msg: { to, subject, lines: [string | {button:{label,url}} | {rows:[[k,v]]}], clientId }
 export async function sendEmail(env, s, msg) {
+  // A client's emails carry their brand; staff and unknown recipients get the house look.
+  s = await settingsForClient(env, s, msg.clientId);
+  if (s._base && s.company_name !== s._base.company_name) {
+    const swap = (t) => String(t).split(s._base.company_name).join(s.company_name);
+    msg = { ...msg, subject: swap(msg.subject), lines: msg.lines.map((l) => (typeof l === "string" ? swap(l) : l)) };
+  }
   const from = env.FROM_EMAIL || "no-reply@mail-service.ratlan.net";
   const fromName = s.mail_from_name || s.company_name;
   const { text, html } = render(s, msg);
@@ -123,9 +130,11 @@ function render(s, msg) {
   }
   const footer = `${s.company_name}${s.company_address ? " · " + s.company_address.split("\n").join(", ") : ""}`;
   const text = [...textParts, "", "--", footer].join("\n\n").replace(/\n{3,}/g, "\n\n");
-  const mark = /^https:\/\//.test(s.site_url || "") ? `<img src="${esc(s.site_url.replace(/\/+$/, ""))}/brand/mark-512.png" width="34" height="34" alt="" style="vertical-align:middle;border-radius:9px;margin-right:10px">` : "";
-  const html = `<!doctype html><html><body style="margin:0;background:#fff8f2;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#14141c">
-<table role="presentation" width="100%" style="background:#fff8f2;padding:28px 12px"><tr><td align="center">
+  const markUrl = s.email_mark || (/^https:\/\//.test(s.site_url || "") ? `${s.site_url.replace(/\/+$/, "")}/brand/mark-512.png` : "");
+  const bg = /^#[0-9a-f]{6}$/i.test(s.theme_color || "") ? s.theme_color : "#fff8f2";
+  const mark = markUrl ? `<img src="${esc(markUrl)}" width="34" height="34" alt="" style="vertical-align:middle;border-radius:9px;margin-right:10px">` : "";
+  const html = `<!doctype html><html><body style="margin:0;background:${bg};font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#14141c">
+<table role="presentation" width="100%" style="background:${bg};padding:28px 12px"><tr><td align="center">
 <table role="presentation" width="100%" style="max-width:560px;background:#fff;border-radius:18px;overflow:hidden;border:1px solid #e8dccf">
 <tr><td style="padding:22px 28px;border-bottom:4px solid ${color};font-size:20px;font-weight:800;letter-spacing:-.01em;color:#14141c">${mark}${esc(s.company_name)}</td></tr>
 <tr><td style="padding:28px;font-size:15px">${htmlParts.join("")}</td></tr>

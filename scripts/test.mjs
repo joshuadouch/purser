@@ -218,7 +218,7 @@ function browser() {
   };
   const b = {
     jar,
-    get: (p) => req("GET", p),
+    get: (p, h) => req("GET", p, null, h),
     post: (p, f, h) => req("POST", p, f || {}, h),
     async csrf(path) {
       const r = await b.get(path);
@@ -662,6 +662,59 @@ assert.ok(berthAccounts.has(fayAcc), "account kept for the mail");
 assert.equal(berthAccounts.get(fayAcc).plan, "Business Email");
 assert.deepEqual(berthAccounts.get(fayAcc).addons, []);
 assert.equal((await q(`SELECT berth_addon FROM services WHERE id = ${fayMail}`)).berth_addon, 0);
+
+// ---- brands: PureHost visitors see PureHost ----------------------------------------------------
+const pv = browser();
+r = await pv.get("/register?brand=purehost");
+assert.equal(r.status, 302);
+assert.equal(r.headers.get("location"), "/register");
+assert.equal(pv.jar.get("purser_brand"), "purehost");
+r = await pv.get("/register");
+ok200(r, "branded register");
+assert.match(r.text_, /<title>[^<]*PureHost<\/title>/);
+assert.match(r.text_, /\/brands\/purehost\/theme\.css/);
+assert.match(r.text_, /\/brands\/purehost\/favicon\.svg/);
+assert.match(r.text_, /https:\/\/purehost\.co\.uk\/web-hosting\//);
+assert.ok(!r.text_.includes("fonts.googleapis.com"), "no Ratlan fonts on PureHost pages");
+await env.DB.prepare("DELETE FROM login_attempts").run(); // earlier sign-ups share this IP's limit
+see(await pv.post("/register", { first_name: "Pia", last_name: "P", email: "pia@example.com", address1: "x", city: "y", postcode: "z", password: "pia-password-12", terms: "1" }), "pia");
+assert.equal((await q("SELECT brand FROM clients WHERE email = 'pia@example.com'")).brand, "purehost");
+const piaMail = lastMailTo("pia@example.com");
+assert.ok(piaMail.raw.includes("Subject: Welcome to PureHost"), "branded subject");
+assert.ok(piaMail.raw.includes("From: PureHost <"), "branded sender");
+assert.ok(qpDecode(piaMail.raw).includes("https://purehost.co.uk/brand/mark-512.png"), "branded email logo");
+// Signed in, the client's own brand wins over the cookie.
+pv.jar.delete("purser_brand");
+r = await pv.get("/");
+assert.match(r.text_, /<title>[^<]*PureHost<\/title>/);
+// The house brand for house clients, even with a PureHost cookie.
+alice.jar.set("purser_brand", "purehost");
+r = await alice.get("/");
+assert.ok(!r.text_.includes("theme.css"), "alice keeps the house look");
+alice.jar.delete("purser_brand");
+// A visitor coming from purehost.co.uk gets PureHost, and from the house site gets the house look back.
+const rv = browser();
+r = await rv.get("/login", { referer: "https://purehost.co.uk/web-hosting/" });
+assert.match(r.text_, /theme\.css/);
+assert.equal(rv.jar.get("purser_brand"), "purehost");
+r = await rv.get("/login");
+assert.match(r.text_, /theme\.css/);
+r = await rv.get("/login", { referer: "https://ratlan.net/" });
+assert.ok(!r.text_.includes("theme.css"));
+assert.ok(!rv.jar.has("purser_brand"));
+// Staff manage brands and a client's brand.
+r = await admin.get("/admin/settings?tab=brands");
+ok200(r, "brands tab");
+assert.match(r.text_, /PureHost/);
+const piaId = (await q("SELECT id FROM clients WHERE email = 'pia@example.com'")).id;
+r = await admin.get(`/admin/clients/${piaId}`);
+assert.match(r.text_, /<dt>Brand<\/dt><dd>PureHost/);
+r = await admin.submit("/admin/settings?tab=brands", "/admin/settings/brands", { old_slug: "purehost", slug: "purehost", name: "PureHost UK", site_url: "https://purehost.co.uk/", active: "1", brand_color: "#1650e0" });
+assert.equal(see(r, "brand save"), "/admin/settings?tab=brands");
+assert.equal((await q("SELECT name, site_url FROM brands WHERE slug = 'purehost'")).site_url, "https://purehost.co.uk");
+r = await admin.submit(`/admin/clients/${piaId}?tab=details`, `/admin/clients/${piaId}`, { first_name: "Pia", email: "pia@example.com", brand: "" });
+see(r, "unbrand client");
+assert.equal((await q("SELECT brand FROM clients WHERE id = ?", piaId)).brand, null);
 
 // Migrations are idempotent.
 resetMigrationState();
